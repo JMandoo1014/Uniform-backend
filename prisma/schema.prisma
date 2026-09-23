@@ -1,0 +1,173 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  RESTRICTED
+  WITHDRAWN
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum EnrollmentStatus {
+  ENROLLED
+  LEAVE_OF_ABSENCE
+  GRADUATED
+}
+
+enum SurveyOwnerType {
+  USER
+  TEAM
+}
+
+enum SurveyStatus {
+  DRAFT
+  RECRUITING
+  CLOSED
+  ARCHIVED
+  REMOVED
+}
+
+enum SurveyQuestionType {
+  SINGLE_CHOICE
+  MULTI_CHOICE
+  SCALE
+  SHORT_ANSWER
+  NARRATIVE
+  ETC
+}
+
+model User {
+  id                 String           @id @default(uuid())
+  email              String           @unique
+  passwordHash       String
+  nickname           String           @unique
+  gender             Gender
+  grade              Int
+  majorField         String
+  enrollmentStatus   EnrollmentStatus
+  marketingOptIn     Boolean          @default(false)
+  status             UserStatus       @default(PENDING_VERIFICATION)
+  agreedTermsVersion String
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  // Not in the original spec; required to implement POST /auth/verify-email.
+  emailVerificationToken          String?   @unique
+  emailVerificationTokenExpiresAt DateTime?
+
+  statusHistories UserStatusHistory[]
+  ledTeams        Team[]              @relation("TeamLeader")
+  teamMemberships TeamMember[]
+
+  @@map("users")
+}
+
+model UserStatusHistory {
+  id        String     @id @default(uuid())
+  userId    String
+  status    UserStatus
+  reason    String?
+  changedAt DateTime   @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_status_histories")
+}
+
+model Team {
+  id          String    @id @default(uuid())
+  name        String
+  leaderId    String
+  inviteToken String    @unique @default(uuid())
+  createdAt   DateTime  @default(now())
+  disbandedAt DateTime?
+
+  leader  User         @relation("TeamLeader", fields: [leaderId], references: [id])
+  members TeamMember[]
+
+  @@index([leaderId])
+  @@map("teams")
+}
+
+model TeamMember {
+  id       String   @id @default(uuid())
+  teamId   String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@map("team_members")
+}
+
+// ownerId is polymorphic (points to User.id or Team.id depending on ownerType)
+// and intentionally has no Prisma-level foreign key; ownership is resolved in the service layer.
+model Survey {
+  id          String          @id @default(uuid())
+  ownerType   SurveyOwnerType
+  ownerId     String
+  title       String
+  description String?
+  status      SurveyStatus    @default(DRAFT)
+  targetCount Int
+  deadlineAt  DateTime?
+  publishedAt DateTime?
+  closedAt    DateTime?
+  purgeAt     DateTime?
+  version     Int             @default(0)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  questions SurveyQuestion[]
+
+  @@index([ownerType, ownerId])
+  @@map("surveys")
+}
+
+model SurveyQuestion {
+  id           String             @id @default(uuid())
+  surveyId     String
+  orderNo      Int
+  stableKey    String
+  type         SurveyQuestionType
+  questionText String
+  required     Boolean            @default(true)
+  minSelect    Int?
+  maxSelect    Int?
+  minScale     Int?
+  maxScale     Int?
+
+  survey  Survey         @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  options SurveyOption[]
+
+  @@unique([surveyId, stableKey])
+  @@unique([surveyId, orderNo])
+  @@map("survey_questions")
+}
+
+model SurveyOption {
+  id         String @id @default(uuid())
+  questionId String
+  orderNo    Int
+  label      String
+
+  question SurveyQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, orderNo])
+  @@map("survey_options")
+}
