@@ -17,13 +17,34 @@ enum UserStatus {
 enum Gender {
   MALE
   FEMALE
-  OTHER
+  PREFER_NOT_TO_SAY
 }
 
 enum EnrollmentStatus {
   ENROLLED
   LEAVE_OF_ABSENCE
   GRADUATED
+  NOT_APPLICABLE
+}
+
+enum GradeLevel {
+  FRESHMAN
+  SOPHOMORE
+  JUNIOR
+  SENIOR_OR_ABOVE
+  GRADUATE
+  NOT_APPLICABLE
+}
+
+enum MajorField {
+  HUMANITIES_SOCIAL
+  BUSINESS
+  ENGINEERING
+  NATURAL_SCIENCE
+  MEDICINE
+  ARTS_SPORTS
+  EDUCATION
+  NOT_APPLICABLE
 }
 
 enum SurveyOwnerType {
@@ -54,8 +75,8 @@ model User {
   passwordHash       String
   nickname           String           @unique
   gender             Gender
-  grade              Int
-  majorField         String
+  grade              GradeLevel
+  majorField         MajorField
   enrollmentStatus   EnrollmentStatus
   marketingOptIn     Boolean          @default(false)
   status             UserStatus       @default(PENDING_VERIFICATION)
