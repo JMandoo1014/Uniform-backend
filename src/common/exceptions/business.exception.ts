@@ -101,3 +101,11 @@ export class SurveyVersionConflictException extends HttpException {
     );
   }
 }
+
+// Spec 4.5 step 1: "계정이 활성인지" 확인 — RESTRICTED/PENDING_VERIFICATION/
+// WITHDRAWN 등 ACTIVE가 아닌 계정은 거부한다.
+export class AccountNotActiveException extends BusinessException {
+  constructor() {
+    super('활성 회원만 이용할 수 있는 기능입니다.', HttpStatus.FORBIDDEN);
+  }
+}
