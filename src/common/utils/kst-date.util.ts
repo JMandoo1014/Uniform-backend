@@ -39,6 +39,13 @@ export function toKstDateString(date: Date): string {
   return new Date(date.getTime() + KST_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+/** Spec 7.3: "기준 시각" stamped on downloaded result images, e.g. "2026-09-25 03:15". */
+export function formatKstDateTime(date: Date): string {
+  const kst = new Date(date.getTime() + KST_OFFSET_MS);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())} ${pad(kst.getUTCHours())}:${pad(kst.getUTCMinutes())}`;
+}
+
 /** Spec 6.2: KST Monday 00:00 of the week containing `date` — the leaderboard's weekly bucket key. */
 export function getKstWeekStart(date: Date): Date {
   const kst = new Date(date.getTime() + KST_OFFSET_MS);
