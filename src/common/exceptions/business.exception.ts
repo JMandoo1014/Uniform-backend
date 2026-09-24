@@ -161,3 +161,20 @@ export class SurveyArchiveNotAllowedException extends BusinessException {
     );
   }
 }
+
+// Spec 3.1: "한 회원은 최대 3개 팀에 속할 수 있다."
+export class TeamJoinLimitExceededException extends BusinessException {
+  constructor() {
+    super(
+      '이미 3개의 팀에 속해 있어 더 가입할 수 없습니다.',
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+// Spec 3.1: 팀 화면(멤버 목록·초대 링크 등)은 현재 팀원만 볼 수 있다.
+export class NotTeamMemberException extends BusinessException {
+  constructor() {
+    super('현재 팀원만 접근할 수 있습니다.', HttpStatus.FORBIDDEN);
+  }
+}
