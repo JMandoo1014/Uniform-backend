@@ -8,6 +8,7 @@ import { SurveyModule } from './survey/survey.module';
 import { ResponseModule } from './response/response.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { ResultModule } from './result/result.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { ResultModule } from './result/result.module';
     ResponseModule,
     LeaderboardModule,
     ResultModule,
+    DashboardModule,
   ],
 })
 export class AppModule {}
