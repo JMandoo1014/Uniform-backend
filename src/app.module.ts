@@ -6,6 +6,7 @@ import { UserModule } from './user/user.module';
 import { TeamModule } from './team/team.module';
 import { SurveyModule } from './survey/survey.module';
 import { ResponseModule } from './response/response.module';
+import { LeaderboardModule } from './leaderboard/leaderboard.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { ResponseModule } from './response/response.module';
     TeamModule,
     SurveyModule,
     ResponseModule,
+    LeaderboardModule,
   ],
 })
 export class AppModule {}
