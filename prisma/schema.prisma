@@ -177,7 +177,7 @@ model Survey {
   title       String
   description String?
   status      SurveyStatus    @default(DRAFT)
-  targetCount Int
+  targetCount Int?
   deadlineAt  DateTime?
   publishedAt DateTime?
   closedAt    DateTime?
@@ -193,17 +193,19 @@ model Survey {
 }
 
 model SurveyQuestion {
-  id           String             @id @default(uuid())
-  surveyId     String
-  orderNo      Int
-  stableKey    String
-  type         SurveyQuestionType
-  questionText String
-  required     Boolean            @default(true)
-  minSelect    Int?
-  maxSelect    Int?
-  minScale     Int?
-  maxScale     Int?
+  id            String             @id @default(uuid())
+  surveyId      String
+  orderNo       Int
+  stableKey     String
+  type          SurveyQuestionType
+  questionText  String
+  required      Boolean            @default(true)
+  minSelect     Int?
+  maxSelect     Int?
+  minScale      Int?
+  maxScale      Int?
+  minScaleLabel String?
+  maxScaleLabel String?
 
   survey  Survey         @relation(fields: [surveyId], references: [id], onDelete: Cascade)
   options SurveyOption[]
@@ -214,10 +216,11 @@ model SurveyQuestion {
 }
 
 model SurveyOption {
-  id         String @id @default(uuid())
+  id         String  @id @default(uuid())
   questionId String
   orderNo    Int
   label      String
+  isEtc      Boolean @default(false)
 
   question SurveyQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
