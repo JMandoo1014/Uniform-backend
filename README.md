@@ -27,6 +27,8 @@
 
 ## Project setup
 
+Node 24.x 사용 (`.nvmrc` 참고).
+
 ```bash
 $ npm install
 ```
