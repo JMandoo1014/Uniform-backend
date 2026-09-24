@@ -101,3 +101,38 @@ export class SurveyVersionConflictException extends HttpException {
     );
   }
 }
+
+// Spec 5.1: 활성 회원만 응답할 수 있다(인증대기/이용제한/탈퇴 계정은 거부).
+export class AccountNotActiveException extends BusinessException {
+  constructor() {
+    super('활성 상태의 계정만 응답할 수 있습니다.', HttpStatus.FORBIDDEN);
+  }
+}
+
+// Spec 5.1/3.3: 본인 설문 또는 자기 팀의 팀 설문에는 응답할 수 없다.
+export class OwnSurveyResponseForbiddenException extends BusinessException {
+  constructor() {
+    super('본인이 만든 설문에는 응답할 수 없습니다.', HttpStatus.FORBIDDEN);
+  }
+}
+
+// Spec 5.1/5.5: 모집 중이 아니거나(마감/보관/운영삭제 등) 마감 시각이 지난 설문.
+export class SurveyNotOpenException extends BusinessException {
+  constructor() {
+    super('모집 중인 설문이 아닙니다.', HttpStatus.CONFLICT);
+  }
+}
+
+// Spec 5.1: 이미 제출을 완료한 설문은 다시 응답할 수 없다.
+export class AlreadyRespondedException extends BusinessException {
+  constructor() {
+    super('이미 응답을 완료한 설문입니다.', HttpStatus.CONFLICT);
+  }
+}
+
+// Spec 5.4: 서버 기본 검사(필수 답변·입력 규칙 등) 실패. 위반 사항을 모두 모아 전달한다.
+export class AnswerValidationException extends HttpException {
+  constructor(errors: string[]) {
+    super({ message: errors }, HttpStatus.BAD_REQUEST);
+  }
+}

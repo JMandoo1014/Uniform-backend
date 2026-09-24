@@ -38,3 +38,14 @@ export function isKstDateOnOrAfterToday(input: string): boolean {
 export function toKstDateString(date: Date): string {
   return new Date(date.getTime() + KST_OFFSET_MS).toISOString().slice(0, 10);
 }
+
+/** Spec 6.2: KST Monday 00:00 of the week containing `date` — the leaderboard's weekly bucket key. */
+export function getKstWeekStart(date: Date): Date {
+  const kst = new Date(date.getTime() + KST_OFFSET_MS);
+  const kstWeekday = kst.getUTCDay(); // 0(Sun)..6(Sat), read via the KST-shift trick above
+  const daysSinceMonday = (kstWeekday + 6) % 7;
+  const kstMondayWallMs =
+    Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate()) -
+    daysSinceMonday * 24 * 60 * 60 * 1000;
+  return new Date(kstMondayWallMs - KST_OFFSET_MS);
+}
