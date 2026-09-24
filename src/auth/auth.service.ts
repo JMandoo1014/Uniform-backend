@@ -5,6 +5,7 @@ import { UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { parseDurationToMs } from '../common/utils/duration.util';
+import { BCRYPT_SALT_ROUNDS } from '../common/constants/password.constant';
 import {
   EmailAlreadyExistsException,
   EmailNotVerifiedException,
@@ -18,8 +19,6 @@ import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { JwtPayload } from './types/jwt-payload.type';
-
-const SALT_ROUNDS = 10;
 
 @Injectable()
 export class AuthService {
@@ -41,7 +40,7 @@ export class AuthService {
       throw new NicknameAlreadyExistsException();
     }
 
-    const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_SALT_ROUNDS);
     const emailVerificationToken = randomBytes(32).toString('hex');
     const ttl = this.configService.get<string>(
       'EMAIL_VERIFICATION_TOKEN_EXPIRES_IN',
@@ -110,7 +109,7 @@ export class AuthService {
       throw new EmailNotVerifiedException();
     }
 
-    return this.issueTokens({ sub: user.id, email: user.email });
+    return this.issueTokens({ sub: user.id, email: dto.email });
   }
 
   private async issueTokens(payload: JwtPayload): Promise<TokenResponseDto> {
