@@ -9,6 +9,8 @@ export class SurveyDetailResponseDto {
   id: string;
   title: string;
   description: string | null;
+  ownerType: SurveyWithQuestions['ownerType'];
+  // Spec 3.3: 팀 설문은 팀 이름으로 표시한다 — USER는 등록자 닉네임.
   ownerNickname: string | null;
   status: SurveyWithQuestions['status'];
   targetCount: number | null;
@@ -25,6 +27,7 @@ export class SurveyDetailResponseDto {
     this.id = survey.id;
     this.title = survey.title;
     this.description = survey.description;
+    this.ownerType = survey.ownerType;
     this.ownerNickname = ownerNickname;
     this.status = survey.status;
     this.targetCount = survey.targetCount;

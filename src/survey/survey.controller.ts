@@ -18,6 +18,9 @@ import { SurveyService } from './survey.service';
 import { CreateSurveyDraftDto } from './dto/create-survey-draft.dto';
 import { UpdateSurveyDraftDto } from './dto/update-survey-draft.dto';
 import { ListSurveysQueryDto } from './dto/list-surveys-query.dto';
+import { MoveToTeamDto } from './dto/move-to-team.dto';
+import { CopySurveyDto } from './dto/copy-survey.dto';
+import { PreviewResponseDto } from './dto/preview-response.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('surveys')
@@ -56,6 +59,36 @@ export class SurveyController {
   @Delete('drafts/:id')
   async deleteDraft(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     await this.surveyService.deleteDraft(user.sub, id);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('drafts/:id/move-to-team')
+  moveToTeam(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: MoveToTeamDto,
+  ) {
+    return this.surveyService.moveToTeam(user.sub, id, dto);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post(':id/copy')
+  copySurvey(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: CopySurveyDto,
+  ) {
+    return this.surveyService.copySurvey(user.sub, id, dto);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('drafts/:id/preview-response')
+  previewResponse(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: PreviewResponseDto,
+  ) {
+    return this.surveyService.previewResponse(user.sub, id, dto);
   }
 
   @Get()
