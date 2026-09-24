@@ -65,10 +65,7 @@ export class RecentlyWithdrawnEmailException extends BusinessException {
 
 export class InvalidPasswordResetTokenException extends BusinessException {
   constructor() {
-    super(
-      '유효하지 않거나 만료된 재설정 토큰입니다.',
-      HttpStatus.BAD_REQUEST,
-    );
+    super('유효하지 않거나 만료된 재설정 토큰입니다.', HttpStatus.BAD_REQUEST);
   }
 }
 

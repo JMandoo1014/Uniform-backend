@@ -172,10 +172,7 @@ export class AuthService {
       throw new InvalidPasswordResetTokenException();
     }
 
-    const passwordHash = await bcrypt.hash(
-      dto.newPassword,
-      BCRYPT_SALT_ROUNDS,
-    );
+    const passwordHash = await bcrypt.hash(dto.newPassword, BCRYPT_SALT_ROUNDS);
     await this.userService.resetPassword(user.id, passwordHash);
   }
 

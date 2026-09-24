@@ -19,6 +19,11 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
+// TODO: spec 2.2 — "7일 동안 인증하지 않으면 가입 정보를 지우고 닉네임 선점을
+// 해제한다." No scheduler exists yet; this cleanup is deliberately out of
+// scope here and will be built together with the 30-day survey purge batch
+// (spec 7.4) so both scheduled jobs land at once.
+
 @Injectable()
 export class UserService {
   constructor(private readonly prisma: PrismaService) {}
