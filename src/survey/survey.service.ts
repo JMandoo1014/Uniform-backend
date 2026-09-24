@@ -196,6 +196,11 @@ export class SurveyService {
     return new SurveyResponseDto(updated);
   }
 
+  // TODO(survey-team-integration): 팀 초안 삭제 권한(spec 3.1 "팀장 또는 만든 사람")은
+  // 이번 PR 스코프 제외. Survey에 팀 내 생성자를 별도로 기록하는 필드(creatorId 등)가
+  // 없어서, 스키마 변경(기찬과 사전 협의 필요) 없이는 "만든 사람" 조건을 판별할 수 없음.
+  // 현재는 findOwnedSurveyOrThrow가 ownerType===USER를 강제하므로 팀 초안은 이 메서드로
+  // 아예 접근 자체가 안 됨(의도된 동작, 버그 아님) — 팀 초안 삭제 기능 자체가 미구현 상태.
   async deleteDraft(userId: string, surveyId: string): Promise<void> {
     const survey = await this.findOwnedSurveyOrThrow(userId, surveyId);
     if (survey.status !== SurveyStatus.DRAFT) {
