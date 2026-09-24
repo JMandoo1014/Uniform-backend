@@ -69,6 +69,18 @@ export class InvalidPasswordResetTokenException extends BusinessException {
   }
 }
 
+// POST /auth/refresh: covers both a bad/expired/tampered refresh token and an
+// otherwise-valid one whose account is no longer ACTIVE (withdrawn/restricted/
+// still pending) since it was issued.
+export class InvalidRefreshTokenException extends BusinessException {
+  constructor() {
+    super(
+      '유효하지 않거나 만료된 리프레시 토큰입니다.',
+      HttpStatus.UNAUTHORIZED,
+    );
+  }
+}
+
 export class EmailChangeNotAllowedException extends BusinessException {
   constructor() {
     super(
