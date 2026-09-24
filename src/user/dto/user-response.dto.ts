@@ -11,6 +11,7 @@ export class UserResponseDto {
   marketingOptIn: boolean;
   marketingOptInChangedAt: User['marketingOptInChangedAt'];
   status: User['status'];
+  agreedTermsVersion: User['agreedTermsVersion'];
   createdAt: Date;
 
   constructor(user: User) {
@@ -24,6 +25,7 @@ export class UserResponseDto {
     this.marketingOptIn = user.marketingOptIn;
     this.marketingOptInChangedAt = user.marketingOptInChangedAt;
     this.status = user.status;
+    this.agreedTermsVersion = user.agreedTermsVersion;
     this.createdAt = user.createdAt;
   }
 }

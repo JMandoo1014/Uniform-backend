@@ -88,6 +88,10 @@ model User {
   emailVerificationToken          String?   @unique
   emailVerificationTokenExpiresAt DateTime?
 
+  // Not in the original spec; required to implement POST /auth/password/reset-confirm.
+  passwordResetToken          String?   @unique
+  passwordResetTokenExpiresAt DateTime?
+
   // Spec 8.1 / 2.3: marketing opt-in changes only need the latest change timestamp.
   marketingOptInChangedAt DateTime?
 

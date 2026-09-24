@@ -19,6 +19,11 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
+// TODO: spec 2.2 — "7일 동안 인증하지 않으면 가입 정보를 지우고 닉네임 선점을
+// 해제한다." No scheduler exists yet; this cleanup is deliberately out of
+// scope here and will be built together with the 30-day survey purge batch
+// (spec 7.4) so both scheduled jobs land at once.
+
 @Injectable()
 export class UserService {
   constructor(private readonly prisma: PrismaService) {}
@@ -41,8 +46,53 @@ export class UserService {
     });
   }
 
+  findByPasswordResetToken(token: string) {
+    return this.prisma.user.findUnique({
+      where: { passwordResetToken: token },
+    });
+  }
+
   create(data: Prisma.UserCreateInput) {
     return this.prisma.user.create({ data });
+  }
+
+  // Reused by signup's initial send, POST /auth/resend-verification, and
+  // POST /auth/pending-email-change (which also swaps the email itself).
+  async setEmailVerificationToken(
+    userId: string,
+    token: string,
+    expiresAt: Date,
+    newEmail?: string,
+  ) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(newEmail !== undefined ? { email: newEmail } : {}),
+        emailVerificationToken: token,
+        emailVerificationTokenExpiresAt: expiresAt,
+      },
+    });
+  }
+
+  async setPasswordResetToken(userId: string, token: string, expiresAt: Date) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        passwordResetToken: token,
+        passwordResetTokenExpiresAt: expiresAt,
+      },
+    });
+  }
+
+  async resetPassword(userId: string, passwordHash: string) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        passwordHash,
+        passwordResetToken: null,
+        passwordResetTokenExpiresAt: null,
+      },
+    });
   }
 
   async updateStatus(userId: string, status: UserStatus, reason?: string) {
