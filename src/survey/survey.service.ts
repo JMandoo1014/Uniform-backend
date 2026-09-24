@@ -269,9 +269,9 @@ export class SurveyService {
     nextCursor: string | null;
   }> {
     const limit = query.limit ?? SURVEY_LIST_DEFAULT_LIMIT;
+    // Spec 3.3: 팀 초안을 게시하면 팀 설문이 되고, 팀 이름으로 이 목록에도 나온다.
     const where: Prisma.SurveyWhereInput = {
       status: SurveyStatus.RECRUITING,
-      ownerType: SurveyOwnerType.USER,
     };
 
     if (query.cursor) {
@@ -292,22 +292,13 @@ export class SurveyService {
     const hasMore = rows.length > limit;
     const page = hasMore ? rows.slice(0, limit) : rows;
 
-    const ownerIds = [...new Set(page.map((survey) => survey.ownerId))];
-    const owners = ownerIds.length
-      ? await this.prisma.user.findMany({
-          where: { id: { in: ownerIds } },
-          select: { id: true, nickname: true },
-        })
-      : [];
-    const nicknameByOwnerId = new Map(
-      owners.map((owner) => [owner.id, owner.nickname]),
-    );
+    const displayNameByOwnerId = await this.resolveOwnerDisplayNames(page);
 
     const items = page.map(
       (survey) =>
         new SurveyListItemResponseDto(
           survey,
-          nicknameByOwnerId.get(survey.ownerId) ?? null,
+          displayNameByOwnerId.get(survey.ownerId) ?? null,
           viewerId,
         ),
     );
@@ -321,7 +312,8 @@ export class SurveyService {
     return { items, nextCursor };
   }
 
-  // Spec 5.1: 임시저장은 작성자만, 운영 삭제는 누구에게도 보이지 않는다.
+  // Spec 5.1: 임시저장은 작성자(팀 초안은 현재 팀원)만, 운영 삭제는 누구에게도
+  // 보이지 않는다. 모집 중 이후 상태는 팀 설문이어도 누구나 볼 수 있다(3.3).
   async getDetail(
     viewerId: string,
     surveyId: string,
@@ -331,23 +323,28 @@ export class SurveyService {
       include: SURVEY_WITH_QUESTIONS_INCLUDE,
     });
 
-    if (
-      !survey ||
-      survey.ownerType !== SurveyOwnerType.USER ||
-      survey.status === SurveyStatus.REMOVED ||
-      (survey.status === SurveyStatus.DRAFT && survey.ownerId !== viewerId)
-    ) {
+    if (!survey || survey.status === SurveyStatus.REMOVED) {
       throw new NotFoundException('설문을 찾을 수 없습니다.');
     }
 
-    const owner = await this.prisma.user.findUnique({
-      where: { id: survey.ownerId },
-      select: { nickname: true },
-    });
+    if (survey.status === SurveyStatus.DRAFT) {
+      if (survey.ownerType === SurveyOwnerType.USER) {
+        if (survey.ownerId !== viewerId) {
+          throw new NotFoundException('설문을 찾을 수 없습니다.');
+        }
+      } else {
+        await this.teamService.assertActiveMembership(
+          survey.ownerId,
+          viewerId,
+        );
+      }
+    }
+
+    const displayNameByOwnerId = await this.resolveOwnerDisplayNames([survey]);
 
     return new SurveyDetailResponseDto(
       survey,
-      owner?.nickname ?? null,
+      displayNameByOwnerId.get(survey.ownerId) ?? null,
       viewerId,
     );
   }
@@ -392,5 +389,48 @@ export class SurveyService {
     }
 
     return survey;
+  }
+
+  // Spec 3.3: 목록·상세에서 USER는 등록자 닉네임, TEAM은 팀 이름으로 표시한다.
+  private async resolveOwnerDisplayNames(
+    surveys: { ownerType: SurveyOwnerType; ownerId: string }[],
+  ): Promise<Map<string, string | null>> {
+    const userOwnerIds = [
+      ...new Set(
+        surveys
+          .filter((s) => s.ownerType === SurveyOwnerType.USER)
+          .map((s) => s.ownerId),
+      ),
+    ];
+    const teamOwnerIds = [
+      ...new Set(
+        surveys
+          .filter((s) => s.ownerType === SurveyOwnerType.TEAM)
+          .map((s) => s.ownerId),
+      ),
+    ];
+
+    const owners: { id: string; nickname: string | null }[] =
+      userOwnerIds.length
+        ? await this.prisma.user.findMany({
+            where: { id: { in: userOwnerIds } },
+            select: { id: true, nickname: true },
+          })
+        : [];
+    const teams: { id: string; name: string }[] = teamOwnerIds.length
+      ? await this.prisma.team.findMany({
+          where: { id: { in: teamOwnerIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+
+    const entries: [string, string | null][] = [
+      ...owners.map((owner): [string, string | null] => [
+        owner.id,
+        owner.nickname,
+      ]),
+      ...teams.map((team): [string, string | null] => [team.id, team.name]),
+    ];
+    return new Map<string, string | null>(entries);
   }
 }

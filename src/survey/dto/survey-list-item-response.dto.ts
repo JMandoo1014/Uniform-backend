@@ -9,6 +9,8 @@ export type SurveyListItem = Prisma.SurveyGetPayload<{
 export class SurveyListItemResponseDto {
   id: string;
   title: string;
+  ownerType: SurveyListItem['ownerType'];
+  // Spec 3.3: 팀 설문은 목록에 팀 이름으로 표시한다 — USER는 등록자 닉네임.
   ownerNickname: string | null;
   questionCount: number;
   targetCount: number | null;
@@ -24,6 +26,7 @@ export class SurveyListItemResponseDto {
   ) {
     this.id = survey.id;
     this.title = survey.title;
+    this.ownerType = survey.ownerType;
     this.ownerNickname = ownerNickname;
     this.questionCount = survey._count.questions;
     this.targetCount = survey.targetCount;
