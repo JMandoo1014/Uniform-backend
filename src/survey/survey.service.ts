@@ -18,12 +18,20 @@ import {
 import { kstDateStringToUtcEndOfDay } from '../common/utils/kst-date.util';
 import { CreateSurveyDraftDto } from './dto/create-survey-draft.dto';
 import { UpdateSurveyDraftDto } from './dto/update-survey-draft.dto';
+import { ListSurveysQueryDto } from './dto/list-surveys-query.dto';
 import {
   SurveyResponseDto,
   SurveyWithQuestions,
 } from './dto/survey-response.dto';
+import { SurveyListItemResponseDto } from './dto/survey-list-item-response.dto';
+import { SurveyDetailResponseDto } from './dto/survey-detail-response.dto';
 import { validatePublishableSurvey } from './survey-publish.validator';
-import { SCALE_MAX, SCALE_MIN } from './survey.constants';
+import { decodeSurveyCursor, encodeSurveyCursor } from './survey-cursor.util';
+import {
+  SCALE_MAX,
+  SCALE_MIN,
+  SURVEY_LIST_DEFAULT_LIMIT,
+} from './survey.constants';
 
 const SURVEY_WITH_QUESTIONS_INCLUDE = {
   questions: { include: { options: true } },
@@ -215,6 +223,98 @@ export class SurveyService {
     }
 
     return new SurveyResponseDto(published);
+  }
+
+  // Spec 5.2: 모집 중인 설문만 게시 시각 최신순(동률이면 id 내림차순)으로.
+  async listRecruiting(
+    viewerId: string,
+    query: ListSurveysQueryDto,
+  ): Promise<{
+    items: SurveyListItemResponseDto[];
+    nextCursor: string | null;
+  }> {
+    const limit = query.limit ?? SURVEY_LIST_DEFAULT_LIMIT;
+    const where: Prisma.SurveyWhereInput = {
+      status: SurveyStatus.RECRUITING,
+      ownerType: SurveyOwnerType.USER,
+    };
+
+    if (query.cursor) {
+      const cursor = decodeSurveyCursor(query.cursor);
+      where.OR = [
+        { publishedAt: { lt: cursor.publishedAt } },
+        { publishedAt: cursor.publishedAt, id: { lt: cursor.id } },
+      ];
+    }
+
+    const rows = await this.prisma.survey.findMany({
+      where,
+      orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      include: { _count: { select: { questions: true } } },
+    });
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+
+    const ownerIds = [...new Set(page.map((survey) => survey.ownerId))];
+    const owners = ownerIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: ownerIds } },
+          select: { id: true, nickname: true },
+        })
+      : [];
+    const nicknameByOwnerId = new Map(
+      owners.map((owner) => [owner.id, owner.nickname]),
+    );
+
+    const items = page.map(
+      (survey) =>
+        new SurveyListItemResponseDto(
+          survey,
+          nicknameByOwnerId.get(survey.ownerId) ?? null,
+          viewerId,
+        ),
+    );
+
+    const last = page.at(-1);
+    const nextCursor =
+      hasMore && last?.publishedAt
+        ? encodeSurveyCursor({ publishedAt: last.publishedAt, id: last.id })
+        : null;
+
+    return { items, nextCursor };
+  }
+
+  // Spec 5.1: 임시저장은 작성자만, 운영 삭제는 누구에게도 보이지 않는다.
+  async getDetail(
+    viewerId: string,
+    surveyId: string,
+  ): Promise<SurveyDetailResponseDto> {
+    const survey = await this.prisma.survey.findUnique({
+      where: { id: surveyId },
+      include: SURVEY_WITH_QUESTIONS_INCLUDE,
+    });
+
+    if (
+      !survey ||
+      survey.ownerType !== SurveyOwnerType.USER ||
+      survey.status === SurveyStatus.REMOVED ||
+      (survey.status === SurveyStatus.DRAFT && survey.ownerId !== viewerId)
+    ) {
+      throw new NotFoundException('설문을 찾을 수 없습니다.');
+    }
+
+    const owner = await this.prisma.user.findUnique({
+      where: { id: survey.ownerId },
+      select: { nickname: true },
+    });
+
+    return new SurveyDetailResponseDto(
+      survey,
+      owner?.nickname ?? null,
+      viewerId,
+    );
   }
 
   private async findOwnedSurveyOrThrow(

@@ -31,3 +31,7 @@ export const CHOICE_OPTION_MAX_COUNT = 10;
 // Spec 4.5: 목표 인원은 1~100명.
 export const TARGET_COUNT_MIN = 1;
 export const TARGET_COUNT_MAX = 100;
+
+// Spec 5.2: 목록은 한 번에 20개씩 불러온다.
+export const SURVEY_LIST_DEFAULT_LIMIT = 20;
+export const SURVEY_LIST_MAX_LIMIT = 50;
