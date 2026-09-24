@@ -74,4 +74,13 @@ export class TeamController {
   ) {
     return this.teamService.transferLeader(user.sub, teamId, dto);
   }
+
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Delete(':teamId')
+  async disbandTeam(
+    @CurrentUser() user: JwtPayload,
+    @Param('teamId') teamId: string,
+  ) {
+    await this.teamService.disbandTeam(user.sub, teamId);
+  }
 }

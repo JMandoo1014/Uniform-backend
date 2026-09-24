@@ -176,6 +176,24 @@ export class TeamService {
     return new TeamDetailResponseDto(updated, userId);
   }
 
+  // Spec 3.4: 해산은 팀장만. 팀 초안 이동/팀 설문 유지 로직은 Survey-Team 연동 시 채운다.
+  async disbandTeam(userId: string, teamId: string): Promise<void> {
+    const team = await this.findActiveTeamOrThrow(teamId);
+    this.assertIsLeader(team, userId);
+
+    await this.prisma.$transaction([
+      this.prisma.team.update({
+        where: { id: teamId },
+        data: { disbandedAt: new Date() },
+      }),
+      this.prisma.teamMember.deleteMany({ where: { teamId } }),
+    ]);
+
+    // TODO(spec 3.4): 팀 초안을 해산 당시 팀장(leaderId)의 개인 초안으로 옮기고,
+    // 모집 중인 팀 설문은 마감 시각까지 유지하되 관리 권한·결과 조회는 해산 당시
+    // 팀장에게 남겨야 한다. Survey-Team 연동 단계에서 채운다.
+  }
+
   private async assertActiveUser(userId: string): Promise<void> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user || user.status !== UserStatus.ACTIVE) {
