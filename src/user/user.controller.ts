@@ -15,6 +15,7 @@ import { UserService } from './user.service';
 import { UserResponseDto } from './dto/user-response.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateMarketingOptInDto } from './dto/update-marketing-opt-in.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('users')
@@ -50,5 +51,17 @@ export class UserController {
       dto.currentPassword,
       dto.newPassword,
     );
+  }
+
+  @Patch('me/marketing-opt-in')
+  async updateMarketingOptIn(
+    @CurrentUser() jwtUser: JwtPayload,
+    @Body() dto: UpdateMarketingOptInDto,
+  ) {
+    const user = await this.userService.updateMarketingOptIn(
+      jwtUser.sub,
+      dto.marketingOptIn,
+    );
+    return new UserResponseDto(user);
   }
 }

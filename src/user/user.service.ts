@@ -169,4 +169,12 @@ export class UserService {
       data: { passwordHash },
     });
   }
+
+  // Spec 8.1: 마케팅 수신 설정 변경 시각을 기록한다.
+  async updateMarketingOptIn(userId: string, marketingOptIn: boolean) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { marketingOptIn, marketingOptInChangedAt: new Date() },
+    });
+  }
 }
