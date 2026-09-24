@@ -45,6 +45,21 @@ export class UserService {
     return this.prisma.user.create({ data });
   }
 
+  // Reused by signup's initial send and POST /auth/resend-verification.
+  async setEmailVerificationToken(
+    userId: string,
+    token: string,
+    expiresAt: Date,
+  ) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        emailVerificationToken: token,
+        emailVerificationTokenExpiresAt: expiresAt,
+      },
+    });
+  }
+
   async updateStatus(userId: string, status: UserStatus, reason?: string) {
     return this.prisma.$transaction([
       this.prisma.user.update({

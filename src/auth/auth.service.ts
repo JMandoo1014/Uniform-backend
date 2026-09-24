@@ -19,6 +19,7 @@ import { UserService } from '../user/user.service';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { JwtPayload } from './types/jwt-payload.type';
 
@@ -48,14 +49,10 @@ export class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_SALT_ROUNDS);
-    const emailVerificationToken = randomBytes(32).toString('hex');
-    const ttl = this.configService.get<string>(
-      'EMAIL_VERIFICATION_TOKEN_EXPIRES_IN',
-      '24h',
-    );
-    const emailVerificationTokenExpiresAt = new Date(
-      Date.now() + parseDurationToMs(ttl),
-    );
+    const {
+      token: emailVerificationToken,
+      expiresAt: emailVerificationTokenExpiresAt,
+    } = this.buildEmailVerificationToken();
 
     const user = await this.userService.create({
       email: dto.email,
@@ -120,6 +117,33 @@ export class AuthService {
     }
 
     return this.issueTokens({ sub: user.id, email: dto.email });
+  }
+
+  // Spec 2.2: "인증 대기" 상태에서 재발송 요청 가능. 계정 존재 여부를 노출하지
+  // 않기 위해 항상 같은 응답을 반환하고, 실제 재발송 처리는 내부적으로만 한다.
+  async resendVerification(dto: ResendVerificationDto): Promise<void> {
+    const user = await this.userService.findByEmail(dto.email);
+    if (user && user.status === UserStatus.PENDING_VERIFICATION) {
+      const { token, expiresAt } = this.buildEmailVerificationToken();
+      await this.userService.setEmailVerificationToken(
+        user.id,
+        token,
+        expiresAt,
+      );
+    }
+    // Intentionally no return value: the controller always responds with the
+    // same generic message regardless of whether a user/email matched.
+  }
+
+  private buildEmailVerificationToken(): { token: string; expiresAt: Date } {
+    const ttl = this.configService.get<string>(
+      'EMAIL_VERIFICATION_TOKEN_EXPIRES_IN',
+      '24h',
+    );
+    return {
+      token: randomBytes(32).toString('hex'),
+      expiresAt: new Date(Date.now() + parseDurationToMs(ttl)),
+    };
   }
 
   private async issueTokens(payload: JwtPayload): Promise<TokenResponseDto> {
