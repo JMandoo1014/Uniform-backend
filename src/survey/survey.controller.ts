@@ -19,6 +19,7 @@ import { CreateSurveyDraftDto } from './dto/create-survey-draft.dto';
 import { UpdateSurveyDraftDto } from './dto/update-survey-draft.dto';
 import { ListSurveysQueryDto } from './dto/list-surveys-query.dto';
 import { MoveToTeamDto } from './dto/move-to-team.dto';
+import { CopySurveyDto } from './dto/copy-survey.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('surveys')
@@ -67,6 +68,16 @@ export class SurveyController {
     @Body() dto: MoveToTeamDto,
   ) {
     return this.surveyService.moveToTeam(user.sub, id, dto);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post(':id/copy')
+  copySurvey(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: CopySurveyDto,
+  ) {
+    return this.surveyService.copySurvey(user.sub, id, dto);
   }
 
   @Get()

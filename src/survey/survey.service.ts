@@ -24,6 +24,7 @@ import { CreateSurveyDraftDto } from './dto/create-survey-draft.dto';
 import { UpdateSurveyDraftDto } from './dto/update-survey-draft.dto';
 import { ListSurveysQueryDto } from './dto/list-surveys-query.dto';
 import { MoveToTeamDto } from './dto/move-to-team.dto';
+import { CopySurveyDto } from './dto/copy-survey.dto';
 import {
   SurveyResponseDto,
   SurveyWithQuestions,
@@ -375,6 +376,59 @@ export class SurveyService {
     });
 
     return { success: true };
+  }
+
+  // Spec 4.1: "본인 설문 또는 소속 팀 설문의 제목·설명·문항·보기·문항 설정을 복사해
+  // 같은 작성 공간에 새 초안을 만든다. 응답은 가져오지 않는다." 목표 인원·마감일은
+  // 나열되지 않은 항목이라 복사하지 않는다 — 복사의 대표 용도가 "게시 후 바뀌지
+  // 않는 목표/마감일을 바꾸려고 새로 게시"하는 것이기도 하다(4.5).
+  async copySurvey(
+    userId: string,
+    surveyId: string,
+    dto: CopySurveyDto,
+  ): Promise<{ newSurveyId: string }> {
+    const source = await this.findAccessibleSurveyOrThrow(userId, surveyId);
+
+    const isTeamTarget = dto.targetOwnerType === 'team';
+    if (isTeamTarget) {
+      await this.teamService.assertActiveMembership(dto.teamId!, userId);
+    }
+
+    const created = await this.prisma.survey.create({
+      data: {
+        ownerType: isTeamTarget ? SurveyOwnerType.TEAM : SurveyOwnerType.USER,
+        ownerId: isTeamTarget ? dto.teamId! : userId,
+        title: source.title,
+        description: source.description,
+        status: SurveyStatus.DRAFT,
+        questions: {
+          create: source.questions.map((question) => ({
+            orderNo: question.orderNo,
+            stableKey: randomUUID(),
+            type: question.type,
+            questionText: question.questionText,
+            required: question.required,
+            minSelect: question.minSelect,
+            maxSelect: question.maxSelect,
+            minScale: question.minScale,
+            maxScale: question.maxScale,
+            minScaleLabel: question.minScaleLabel,
+            maxScaleLabel: question.maxScaleLabel,
+            options: question.options.length
+              ? {
+                  create: question.options.map((option) => ({
+                    orderNo: option.orderNo,
+                    label: option.label,
+                    isEtc: option.isEtc,
+                  })),
+                }
+              : undefined,
+          })),
+        },
+      },
+    });
+
+    return { newSurveyId: created.id };
   }
 
   private async findOwnedSurveyOrThrow(
