@@ -35,3 +35,9 @@ export class EmailNotVerifiedException extends BusinessException {
     super('이메일 인증이 완료되지 않았습니다.', HttpStatus.FORBIDDEN);
   }
 }
+
+export class NoProfileChangesException extends BusinessException {
+  constructor() {
+    super('변경할 값이 없습니다.', HttpStatus.BAD_REQUEST);
+  }
+}
