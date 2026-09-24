@@ -9,6 +9,7 @@ import { ResponseModule } from './response/response.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { ResultModule } from './result/result.module';
 import { MypageModule } from './mypage/mypage.module';
+import { SupportModule } from './support/support.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { MypageModule } from './mypage/mypage.module';
     LeaderboardModule,
     ResultModule,
     MypageModule,
+    SupportModule,
   ],
 })
 export class AppModule {}
