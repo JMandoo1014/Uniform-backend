@@ -20,6 +20,7 @@ import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { PasswordResetRequestDto } from './dto/password-reset-request.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { JwtPayload } from './types/jwt-payload.type';
 
@@ -133,6 +134,38 @@ export class AuthService {
     }
     // Intentionally no return value: the controller always responds with the
     // same generic message regardless of whether a user/email matched.
+  }
+
+  // Spec 2.4: "가입 이메일로 재설정 링크를 보낸다. 가입되지 않은 주소여도
+  // 같은 안내 문구를 보여준다." 응답 형태(message)는 계정 유무와 무관하게
+  // 항상 동일하지만, resetToken 필드는 실제 계정이 있을 때만 채워진다.
+  //
+  // TODO: 실제 이메일 발송(SES/SendGrid 등)을 붙이는 즉시 resetToken을
+  // 응답에서 제거하고 이메일로만 전달할 것. 지금은 이메일 발송이 없어
+  // 개발/테스트 편의를 위한 임시 shim이다.
+  async requestPasswordReset(
+    dto: PasswordResetRequestDto,
+  ): Promise<{ resetToken?: string }> {
+    const user = await this.userService.findByEmail(dto.email);
+    if (!user) {
+      return {};
+    }
+
+    const { token, expiresAt } = this.buildPasswordResetToken();
+    await this.userService.setPasswordResetToken(user.id, token, expiresAt);
+
+    return { resetToken: token };
+  }
+
+  private buildPasswordResetToken(): { token: string; expiresAt: Date } {
+    const ttl = this.configService.get<string>(
+      'PASSWORD_RESET_TOKEN_EXPIRES_IN',
+      '30m',
+    );
+    return {
+      token: randomBytes(32).toString('hex'),
+      expiresAt: new Date(Date.now() + parseDurationToMs(ttl)),
+    };
   }
 
   private buildEmailVerificationToken(): { token: string; expiresAt: Date } {

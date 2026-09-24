@@ -60,6 +60,16 @@ export class UserService {
     });
   }
 
+  async setPasswordResetToken(userId: string, token: string, expiresAt: Date) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        passwordResetToken: token,
+        passwordResetTokenExpiresAt: expiresAt,
+      },
+    });
+  }
+
   async updateStatus(userId: string, status: UserStatus, reason?: string) {
     return this.prisma.$transaction([
       this.prisma.user.update({

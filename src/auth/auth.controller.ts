@@ -4,6 +4,7 @@ import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { PasswordResetRequestDto } from './dto/password-reset-request.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -33,5 +34,15 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('password/reset-request')
+  async requestPasswordReset(@Body() dto: PasswordResetRequestDto) {
+    const { resetToken } = await this.authService.requestPasswordReset(dto);
+    return {
+      message: '가입된 이메일이면 비밀번호 재설정 안내를 보냈습니다.',
+      ...(resetToken !== undefined ? { resetToken } : {}),
+    };
   }
 }
