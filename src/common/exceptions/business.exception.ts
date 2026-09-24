@@ -71,3 +71,12 @@ export class InvalidPasswordResetTokenException extends BusinessException {
     );
   }
 }
+
+export class EmailChangeNotAllowedException extends BusinessException {
+  constructor() {
+    super(
+      '인증 대기 상태에서만 가입 이메일을 변경할 수 있습니다.',
+      HttpStatus.CONFLICT,
+    );
+  }
+}

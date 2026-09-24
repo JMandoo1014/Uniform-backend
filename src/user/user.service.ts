@@ -51,15 +51,18 @@ export class UserService {
     return this.prisma.user.create({ data });
   }
 
-  // Reused by signup's initial send and POST /auth/resend-verification.
+  // Reused by signup's initial send, POST /auth/resend-verification, and
+  // POST /auth/pending-email-change (which also swaps the email itself).
   async setEmailVerificationToken(
     userId: string,
     token: string,
     expiresAt: Date,
+    newEmail?: string,
   ) {
     return this.prisma.user.update({
       where: { id: userId },
       data: {
+        ...(newEmail !== undefined ? { email: newEmail } : {}),
         emailVerificationToken: token,
         emailVerificationTokenExpiresAt: expiresAt,
       },

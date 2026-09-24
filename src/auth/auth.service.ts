@@ -9,6 +9,7 @@ import { BCRYPT_SALT_ROUNDS } from '../common/constants/password.constant';
 import {
   AccountWithdrawnException,
   EmailAlreadyExistsException,
+  EmailChangeNotAllowedException,
   EmailNotVerifiedException,
   InvalidCredentialsException,
   InvalidPasswordResetTokenException,
@@ -23,6 +24,7 @@ import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { PasswordResetRequestDto } from './dto/password-reset-request.dto';
 import { PasswordResetConfirmDto } from './dto/password-reset-confirm.dto';
+import { ChangePendingEmailDto } from './dto/change-pending-email.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { JwtPayload } from './types/jwt-payload.type';
 
@@ -175,6 +177,54 @@ export class AuthService {
       BCRYPT_SALT_ROUNDS,
     );
     await this.userService.resetPassword(user.id, passwordHash);
+  }
+
+  // Spec 2.2: "인증 대기: ... 재발송과 가입 이메일 변경만 가능하다." 로그인
+  // 전이라 JWT가 없으므로 현재 이메일+비밀번호로 본인 확인한다.
+  async changePendingEmail(dto: ChangePendingEmailDto) {
+    const user = await this.userService.findByEmail(dto.email);
+    if (!user) {
+      throw new InvalidCredentialsException();
+    }
+
+    const passwordMatches = await bcrypt.compare(
+      dto.password,
+      user.passwordHash,
+    );
+    if (!passwordMatches) {
+      throw new InvalidCredentialsException();
+    }
+
+    if (user.status !== UserStatus.PENDING_VERIFICATION) {
+      throw new EmailChangeNotAllowedException();
+    }
+
+    const [existingEmail, recentlyWithdrawn] = await Promise.all([
+      this.userService.findByEmail(dto.newEmail),
+      this.userService.isEmailBlockedByRecentWithdrawal(dto.newEmail),
+    ]);
+    if (existingEmail) {
+      throw new EmailAlreadyExistsException();
+    }
+    if (recentlyWithdrawn) {
+      throw new RecentlyWithdrawnEmailException();
+    }
+
+    const { token, expiresAt } = this.buildEmailVerificationToken();
+    const updated = await this.userService.setEmailVerificationToken(
+      user.id,
+      token,
+      expiresAt,
+      dto.newEmail,
+    );
+
+    // TODO: wire up an actual email provider (see requestPasswordReset TODO).
+    return {
+      id: updated.id,
+      email: updated.email,
+      status: updated.status,
+      emailVerificationToken: token,
+    };
   }
 
   private buildPasswordResetToken(): { token: string; expiresAt: Date } {
