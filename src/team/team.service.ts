@@ -6,6 +6,7 @@ import {
   AccountNotActiveException,
   AlreadyTeamMemberException,
   InvalidInviteTokenException,
+  LeaderMustTransferBeforeLeavingException,
   NotTeamLeaderException,
   NotTeamMemberException,
   TeamFullException,
@@ -13,6 +14,7 @@ import {
 } from '../common/exceptions/business.exception';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { JoinTeamDto } from './dto/join-team.dto';
+import { TransferLeaderDto } from './dto/transfer-leader.dto';
 import {
   TeamDetailResponseDto,
   TeamWithMembers,
@@ -117,6 +119,60 @@ export class TeamService {
       where: { id: team.id },
       include: TEAM_WITH_MEMBERS_INCLUDE,
     });
+    return new TeamDetailResponseDto(updated, userId);
+  }
+
+  // Spec 3.4: 본인이 나가는 경우 팀장이면 거부, 팀장이 내보내는 경우만 타인 제거 가능.
+  async removeMember(
+    requesterId: string,
+    teamId: string,
+    targetUserId: string,
+  ): Promise<void> {
+    const team = await this.findActiveTeamOrThrow(teamId);
+    this.assertIsMember(team, requesterId);
+
+    if (targetUserId === requesterId) {
+      if (team.leaderId === requesterId) {
+        throw new LeaderMustTransferBeforeLeavingException();
+      }
+    } else if (team.leaderId !== requesterId) {
+      throw new NotTeamLeaderException();
+    }
+
+    const target = team.members.find(
+      (member) => member.userId === targetUserId,
+    );
+    if (!target) {
+      throw new NotFoundException('해당 팀원을 찾을 수 없습니다.');
+    }
+
+    await this.prisma.teamMember.delete({
+      where: { teamId_userId: { teamId, userId: targetUserId } },
+    });
+  }
+
+  // Spec 3.1: 팀장 넘기기는 현재 팀장만, 새 팀장은 현재 팀원이어야 한다.
+  async transferLeader(
+    userId: string,
+    teamId: string,
+    dto: TransferLeaderDto,
+  ): Promise<TeamDetailResponseDto> {
+    const team = await this.findActiveTeamOrThrow(teamId);
+    this.assertIsLeader(team, userId);
+
+    const isNewLeaderMember = team.members.some(
+      (member) => member.userId === dto.newLeaderId,
+    );
+    if (!isNewLeaderMember) {
+      throw new NotFoundException('현재 팀원만 팀장이 될 수 있습니다.');
+    }
+
+    const updated = await this.prisma.team.update({
+      where: { id: teamId },
+      data: { leaderId: dto.newLeaderId },
+      include: TEAM_WITH_MEMBERS_INCLUDE,
+    });
+
     return new TeamDetailResponseDto(updated, userId);
   }
 

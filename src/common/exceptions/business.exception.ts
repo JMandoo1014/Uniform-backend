@@ -206,3 +206,13 @@ export class NotTeamLeaderException extends BusinessException {
     super('팀장만 할 수 있는 작업입니다.', HttpStatus.FORBIDDEN);
   }
 }
+
+// Spec 3.4: "팀장 나가기: 팀장을 다른 팀원에게 넘긴 뒤에만 나갈 수 있다."
+export class LeaderMustTransferBeforeLeavingException extends BusinessException {
+  constructor() {
+    super(
+      '팀장은 팀장을 위임한 뒤에만 팀을 나갈 수 있습니다.',
+      HttpStatus.CONFLICT,
+    );
+  }
+}

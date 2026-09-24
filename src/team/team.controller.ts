@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -14,6 +16,7 @@ import type { JwtPayload } from '../auth/types/jwt-payload.type';
 import { TeamService } from './team.service';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { JoinTeamDto } from './dto/join-team.dto';
+import { TransferLeaderDto } from './dto/transfer-leader.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('teams')
@@ -51,5 +54,24 @@ export class TeamController {
   @Post('join')
   joinTeam(@CurrentUser() user: JwtPayload, @Body() dto: JoinTeamDto) {
     return this.teamService.joinTeam(user.sub, dto);
+  }
+
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Delete(':teamId/members/:userId')
+  async removeMember(
+    @CurrentUser() user: JwtPayload,
+    @Param('teamId') teamId: string,
+    @Param('userId') userId: string,
+  ) {
+    await this.teamService.removeMember(user.sub, teamId, userId);
+  }
+
+  @Patch(':teamId/leader')
+  transferLeader(
+    @CurrentUser() user: JwtPayload,
+    @Param('teamId') teamId: string,
+    @Body() dto: TransferLeaderDto,
+  ) {
+    return this.teamService.transferLeader(user.sub, teamId, dto);
   }
 }
