@@ -1,14 +1,23 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, UserStatus } from '@prisma/client';
+import {
+  Prisma,
+  SurveyOwnerType,
+  SurveyStatus,
+  UserStatus,
+} from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { BCRYPT_SALT_ROUNDS } from '../common/constants/password.constant';
 import {
+  AccountWithdrawnException,
   CurrentPasswordMismatchException,
   NicknameAlreadyExistsException,
   NoProfileChangesException,
 } from '../common/exceptions/business.exception';
+import { hashEmail } from '../common/utils/email-hash.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class UserService {
@@ -175,6 +184,112 @@ export class UserService {
     return this.prisma.user.update({
       where: { id: userId },
       data: { marketingOptIn, marketingOptInChangedAt: new Date() },
+    });
+  }
+
+  async isEmailBlockedByRecentWithdrawal(email: string): Promise<boolean> {
+    const record = await this.prisma.withdrawnEmail.findUnique({
+      where: { emailHash: hashEmail(email) },
+    });
+    if (!record) {
+      return false;
+    }
+    return Date.now() - record.withdrawnAt.getTime() < THIRTY_DAYS_MS;
+  }
+
+  // Spec 2.5 / 3.4: 탈퇴 처리 — 팀장이면 후임자에게 자동 위임하거나 해산,
+  // 본인 명의 설문은 마감/삭제, 닉네임·프로필 삭제, 탈퇴 이메일 해시 보관.
+  async withdraw(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    }
+    if (user.status === UserStatus.WITHDRAWN || !user.email) {
+      throw new AccountWithdrawnException();
+    }
+
+    const emailHash = hashEmail(user.email);
+    const now = new Date();
+    const purgeAt = new Date(now.getTime() + THIRTY_DAYS_MS);
+
+    await this.prisma.$transaction(async (tx) => {
+      const ledTeams = await tx.team.findMany({
+        where: { leaderId: userId, disbandedAt: null },
+      });
+
+      for (const team of ledTeams) {
+        const nextLeader = await tx.teamMember.findFirst({
+          where: { teamId: team.id, userId: { not: userId } },
+          orderBy: { joinedAt: 'asc' },
+        });
+
+        if (nextLeader) {
+          await tx.team.update({
+            where: { id: team.id },
+            data: { leaderId: nextLeader.userId },
+          });
+        } else {
+          // No members left to inherit leadership: disband. The team's own
+          // draft would normally move to the (now-withdrawing) leader's
+          // personal drafts, which are deleted anyway, so it is deleted
+          // directly. Recruiting surveys are left untouched and close on
+          // their original deadline per the general disband rule (3.4).
+          await tx.team.update({
+            where: { id: team.id },
+            data: { disbandedAt: now },
+          });
+          await tx.survey.deleteMany({
+            where: {
+              ownerType: SurveyOwnerType.TEAM,
+              ownerId: team.id,
+              status: SurveyStatus.DRAFT,
+            },
+          });
+        }
+      }
+
+      await tx.teamMember.deleteMany({ where: { userId } });
+
+      await tx.survey.updateMany({
+        where: {
+          ownerType: SurveyOwnerType.USER,
+          ownerId: userId,
+          status: SurveyStatus.RECRUITING,
+        },
+        data: {
+          status: SurveyStatus.CLOSED,
+          closedAt: now,
+          purgeAt,
+          version: { increment: 1 },
+        },
+      });
+
+      await tx.survey.deleteMany({
+        where: {
+          ownerType: SurveyOwnerType.USER,
+          ownerId: userId,
+          status: SurveyStatus.DRAFT,
+        },
+      });
+
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          status: UserStatus.WITHDRAWN,
+          email: null,
+          nickname: null,
+          gender: null,
+          grade: null,
+          majorField: null,
+          enrollmentStatus: null,
+        },
+      });
+
+      await tx.userStatusHistory.create({
+        data: { userId, status: UserStatus.WITHDRAWN, reason: '회원 탈퇴' },
+      });
+
+      await tx.withdrawnEmail.create({ data: { emailHash } });
     });
   }
 }

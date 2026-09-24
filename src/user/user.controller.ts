@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -63,5 +64,11 @@ export class UserController {
       dto.marketingOptIn,
     );
     return new UserResponseDto(user);
+  }
+
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Delete('me')
+  async withdraw(@CurrentUser() jwtUser: JwtPayload) {
+    await this.userService.withdraw(jwtUser.sub);
   }
 }

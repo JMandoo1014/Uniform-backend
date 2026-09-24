@@ -47,3 +47,18 @@ export class CurrentPasswordMismatchException extends BusinessException {
     super('현재 비밀번호가 올바르지 않습니다.', HttpStatus.UNAUTHORIZED);
   }
 }
+
+export class AccountWithdrawnException extends BusinessException {
+  constructor() {
+    super('탈퇴한 계정입니다.', HttpStatus.FORBIDDEN);
+  }
+}
+
+export class RecentlyWithdrawnEmailException extends BusinessException {
+  constructor() {
+    super(
+      '탈퇴 후 30일 동안은 같은 이메일로 다시 가입할 수 없습니다.',
+      HttpStatus.CONFLICT,
+    );
+  }
+}
