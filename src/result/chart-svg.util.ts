@@ -3,8 +3,10 @@
 // 의존성(canvas 등 네이티브 빌드)이 필요 없다.
 const WIDTH = 800;
 const HEIGHT = 600;
-const HEADER_HEIGHT = 110; // 문항이 1줄일 때 기준값 — 2줄이면 늘어난다(wrapQuestionText).
-const LINE_HEIGHT = 26;
+const TITLE_FIRST_LINE_Y = 70;
+const TITLE_LINE_HEIGHT = 32; // 줄 간격 — 23px 폰트 기준 여유 있게(전엔 26이라 답답했음).
+const SUBTITLE_GAP = 36; // 마지막 제목 줄 → "응답 N명 · 기준 ..." 줄까지 간격.
+const DIVIDER_GAP = 20; // 부제목 → 구분선까지 간격.
 const FONT = 'font-family="Malgun Gothic, sans-serif"';
 const PALETTE = [
   '#40abfc',
@@ -134,22 +136,24 @@ function buildHeader(
 ): { svg: string; height: number } {
   const titleWidth = WIDTH - 80;
   const titleLines = wrapText(questionText, titleWidth, 23, 2);
-  const extraLines = Math.max(0, titleLines.length - 1);
-  const height = HEADER_HEIGHT + extraLines * LINE_HEIGHT;
+  const lastTitleLineY =
+    TITLE_FIRST_LINE_Y + (titleLines.length - 1) * TITLE_LINE_HEIGHT;
+  const subtitleY = lastTitleLineY + SUBTITLE_GAP;
+  const height = subtitleY + DIVIDER_GAP;
 
   const titleSvg = titleLines
     .map(
       (line, i) =>
-        `<text x="40" y="${68 + i * LINE_HEIGHT}" font-size="23" font-weight="700" fill="#111827" ${FONT}>${escapeXml(line)}</text>`,
+        `<text x="40" y="${TITLE_FIRST_LINE_Y + i * TITLE_LINE_HEIGHT}" font-size="23" font-weight="700" fill="#111827" ${FONT}>${escapeXml(line)}</text>`,
     )
     .join('');
 
   return {
     height,
     svg: `
-      <text x="40" y="38" font-size="15" fill="#6b7280" ${FONT}>Q${orderNo}</text>
+      <text x="40" y="36" font-size="15" fill="#6b7280" ${FONT}>Q${orderNo}</text>
       ${titleSvg}
-      <text x="40" y="${68 + extraLines * LINE_HEIGHT + 28}" font-size="13" fill="#6b7280" ${FONT}>응답 ${responseCount}명 · 기준 ${asOf}</text>
+      <text x="40" y="${subtitleY}" font-size="13" fill="#6b7280" ${FONT}>응답 ${responseCount}명 · 기준 ${asOf}</text>
       <line x1="40" y1="${height}" x2="${WIDTH - 40}" y2="${height}" stroke="#e5e7eb" />
     `,
   };
@@ -260,7 +264,10 @@ function buildVerticalBarChart(
   const left = 90;
   const right = WIDTH - 90;
   const bottom = chartTop + chartHeight - 50;
-  const top = chartTop + 30;
+  // "평균 X점" 라벨을 위해 맨 위에 고정 밴드를 비워둔다 — top을 더 내려서,
+  // 가장 높은 막대의 값 라벨(top-8 근처)과 겹치지 않게 한다.
+  const averageLabelY = chartTop + 15;
+  const top = chartTop + 55;
   const maxCount = Math.max(1, ...scaleCounts.map((s) => s.count));
   const slot = (right - left) / scaleCounts.length;
   const barWidth = slot * 0.5;
@@ -287,7 +294,7 @@ function buildVerticalBarChart(
     <line x1="${left}" y1="${bottom}" x2="${right}" y2="${bottom}" stroke="#9ca3af" />
     <text x="${left}" y="${bottom + 44}" font-size="12" fill="#6b7280" ${FONT}>${escapeXml(minLabel)}</text>
     <text x="${right}" y="${bottom + 44}" text-anchor="end" font-size="12" fill="#6b7280" ${FONT}>${escapeXml(maxLabel)}</text>
-    <text x="${right}" y="${top - 10}" text-anchor="end" font-size="16" font-weight="700" fill="#111827" ${FONT}>평균 ${average.toFixed(1)}점</text>
+    <text x="${right}" y="${averageLabelY}" text-anchor="end" font-size="16" font-weight="700" fill="#111827" ${FONT}>평균 ${average.toFixed(1)}점</text>
   `;
 }
 
