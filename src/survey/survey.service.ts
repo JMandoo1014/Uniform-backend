@@ -8,10 +8,12 @@ import {
   SurveyOwnerType,
   SurveyQuestionType,
   SurveyStatus,
+  UserStatus,
 } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  AccountNotActiveException,
   SurveyNotDraftException,
   SurveyVersionConflictException,
 } from '../common/exceptions/business.exception';
@@ -190,6 +192,14 @@ export class SurveyService {
   // "같은 게시 요청이 반복되어도 설문은 하나만 만든다" — DRAFT 조건부
   // update로 원자적으로 처리하고, 이미 게시된 상태면 그 결과를 그대로 반환한다.
   async publish(userId: string, surveyId: string): Promise<SurveyResponseDto> {
+    // Spec 4.5 step 1: 게시 가능 여부의 첫 조건인 "계정이 활성인지" 확인.
+    const account = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+    if (!account || account.status !== UserStatus.ACTIVE) {
+      throw new AccountNotActiveException();
+    }
+
     const survey = await this.findOwnedSurveyOrThrow(userId, surveyId);
 
     if (survey.status === SurveyStatus.RECRUITING) {
