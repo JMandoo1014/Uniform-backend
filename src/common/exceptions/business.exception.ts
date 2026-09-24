@@ -77,3 +77,27 @@ export class EmailChangeNotAllowedException extends BusinessException {
     );
   }
 }
+
+// Spec 4.6: draft-only operations (edit, delete, publish) are rejected once a
+// survey has left the "임시저장" (DRAFT) status.
+export class SurveyNotDraftException extends BusinessException {
+  constructor() {
+    super('임시저장 상태의 설문만 처리할 수 있습니다.', HttpStatus.CONFLICT);
+  }
+}
+
+// Spec 4.1: concurrent draft edits are rejected via optimistic locking
+// (Survey.version); the caller must refetch and retry with the latest content,
+// which is attached here so the global exception filter can return it.
+export class SurveyVersionConflictException extends HttpException {
+  constructor(latestSurvey: unknown) {
+    super(
+      {
+        message:
+          '다른 곳에서 먼저 저장되어 버전이 달라졌습니다. 최신 내용을 확인해주세요.',
+        latestSurvey,
+      },
+      HttpStatus.CONFLICT,
+    );
+  }
+}
