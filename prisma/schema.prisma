@@ -90,6 +90,11 @@ enum NotificationType {
   SURVEY_REMOVED
   ACCOUNT_RESTRICTED
   NICKNAME_FORCED
+  // Spec 8.5 / 12.3⑨: Dashboard "최근 활동" 피드가 새 테이블 없이 이 알림
+  // 테이블을 재사용하기로 확정되어 추가 — 본인 활동 기록용이라 TEAM_SURVEY_PUBLISHED
+  // (다른 팀원에게 가는 알림)와 달리 행위자 본인에게만 쌓인다.
+  RESPONSE_SUBMITTED
+  SURVEY_PUBLISHED
 }
 
 model User {

@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  NotificationType,
   Prisma,
   SurveyOwnerType,
   SurveyQuestionType,
@@ -230,6 +231,19 @@ export class SurveyService {
 
     if (count === 0 && published.status !== SurveyStatus.RECRUITING) {
       throw new SurveyNotDraftException();
+    }
+
+    if (count > 0) {
+      // Spec 8.5 / 12.3⑨: Dashboard "최근 활동" 피드가 재사용하는 알림 기록 —
+      // 게시자 본인 앞으로 한 건 남긴다. (기찬 도메인 요청으로 추가, 2026-09-25)
+      await this.prisma.notification.create({
+        data: {
+          userId,
+          type: NotificationType.SURVEY_PUBLISHED,
+          message: `"${published.title}" 설문을 게시했습니다.`,
+          targetUrl: `/surveys/${surveyId}`,
+        },
+      });
     }
 
     return new SurveyResponseDto(published);
