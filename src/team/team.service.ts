@@ -73,6 +73,13 @@ export class TeamService {
     return new TeamDetailResponseDto(team, userId);
   }
 
+  // Survey-Team 연동: 다른 도메인(Survey)이 "현재 팀원인지"만 확인하고 싶을 때
+  // 쓰는 공개 진입점. getTeamDetail과 같은 검증 로직(assertIsMember)을 그대로 쓴다.
+  async assertActiveMembership(teamId: string, userId: string): Promise<void> {
+    const team = await this.findActiveTeamOrThrow(teamId);
+    this.assertIsMember(team, userId);
+  }
+
   // Spec 3.1: 팀장은 언제든 링크를 새로 만들어 이전 링크를 무효로 할 수 있다.
   async regenerateInviteToken(
     userId: string,
