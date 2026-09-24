@@ -5,6 +5,7 @@ import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { PasswordResetRequestDto } from './dto/password-reset-request.dto';
+import { PasswordResetConfirmDto } from './dto/password-reset-confirm.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -44,5 +45,12 @@ export class AuthController {
       message: '가입된 이메일이면 비밀번호 재설정 안내를 보냈습니다.',
       ...(resetToken !== undefined ? { resetToken } : {}),
     };
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('password/reset-confirm')
+  async confirmPasswordReset(@Body() dto: PasswordResetConfirmDto) {
+    await this.authService.confirmPasswordReset(dto);
+    return { message: '비밀번호가 재설정되었습니다.' };
   }
 }

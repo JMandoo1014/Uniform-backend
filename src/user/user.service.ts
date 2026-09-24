@@ -41,6 +41,12 @@ export class UserService {
     });
   }
 
+  findByPasswordResetToken(token: string) {
+    return this.prisma.user.findUnique({
+      where: { passwordResetToken: token },
+    });
+  }
+
   create(data: Prisma.UserCreateInput) {
     return this.prisma.user.create({ data });
   }
@@ -66,6 +72,17 @@ export class UserService {
       data: {
         passwordResetToken: token,
         passwordResetTokenExpiresAt: expiresAt,
+      },
+    });
+  }
+
+  async resetPassword(userId: string, passwordHash: string) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        passwordHash,
+        passwordResetToken: null,
+        passwordResetTokenExpiresAt: null,
       },
     });
   }

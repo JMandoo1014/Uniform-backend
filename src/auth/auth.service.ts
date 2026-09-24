@@ -11,6 +11,7 @@ import {
   EmailAlreadyExistsException,
   EmailNotVerifiedException,
   InvalidCredentialsException,
+  InvalidPasswordResetTokenException,
   InvalidVerificationTokenException,
   NicknameAlreadyExistsException,
   RecentlyWithdrawnEmailException,
@@ -21,6 +22,7 @@ import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { PasswordResetRequestDto } from './dto/password-reset-request.dto';
+import { PasswordResetConfirmDto } from './dto/password-reset-confirm.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { JwtPayload } from './types/jwt-payload.type';
 
@@ -155,6 +157,24 @@ export class AuthService {
     await this.userService.setPasswordResetToken(user.id, token, expiresAt);
 
     return { resetToken: token };
+  }
+
+  async confirmPasswordReset(dto: PasswordResetConfirmDto): Promise<void> {
+    const user = await this.userService.findByPasswordResetToken(dto.token);
+
+    if (
+      !user ||
+      !user.passwordResetTokenExpiresAt ||
+      user.passwordResetTokenExpiresAt.getTime() < Date.now()
+    ) {
+      throw new InvalidPasswordResetTokenException();
+    }
+
+    const passwordHash = await bcrypt.hash(
+      dto.newPassword,
+      BCRYPT_SALT_ROUNDS,
+    );
+    await this.userService.resetPassword(user.id, passwordHash);
   }
 
   private buildPasswordResetToken(): { token: string; expiresAt: Date } {
