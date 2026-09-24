@@ -10,6 +10,7 @@ import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { ResultModule } from './result/result.module';
 import { MypageModule } from './mypage/mypage.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { SupportModule } from './support/support.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     ResultModule,
     MypageModule,
     DashboardModule,
+    SupportModule,
   ],
 })
 export class AppModule {}
