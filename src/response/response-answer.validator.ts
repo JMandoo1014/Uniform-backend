@@ -72,7 +72,9 @@ function validateMultiChoice(
   const min = question.minSelect ?? 1;
   const max = question.maxSelect ?? question.options.length;
   if (values.length < min || values.length > max) {
-    errors.push(`${question.orderNo}번 문항은 ${min}~${max}개를 선택해야 합니다.`);
+    errors.push(
+      `${question.orderNo}번 문항은 ${min}~${max}개를 선택해야 합니다.`,
+    );
   }
 }
 
@@ -85,7 +87,9 @@ function validateScale(
   const min = question.minScale ?? SCALE_MIN;
   const max = question.maxScale ?? SCALE_MAX;
   if (!Number.isInteger(value) || value < min || value > max) {
-    errors.push(`${question.orderNo}번 문항은 ${min}~${max}점 사이로 답해주세요.`);
+    errors.push(
+      `${question.orderNo}번 문항은 ${min}~${max}점 사이로 답해주세요.`,
+    );
   }
 }
 
@@ -97,7 +101,9 @@ function validateText(
 ): void {
   const text = (raw as string).trim();
   if (text.length > maxLength) {
-    errors.push(`${question.orderNo}번 문항은 ${maxLength}자 이하로 입력해주세요.`);
+    errors.push(
+      `${question.orderNo}번 문항은 ${maxLength}자 이하로 입력해주세요.`,
+    );
   }
 }
 

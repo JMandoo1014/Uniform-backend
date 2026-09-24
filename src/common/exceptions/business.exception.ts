@@ -102,10 +102,12 @@ export class SurveyVersionConflictException extends HttpException {
   }
 }
 
-// Spec 5.1: 활성 회원만 응답할 수 있다(인증대기/이용제한/탈퇴 계정은 거부).
+// Spec 4.5 step 1 / 5.1: "계정이 활성인지" 확인 — RESTRICTED/PENDING_VERIFICATION/
+// WITHDRAWN 등 ACTIVE가 아닌 계정은 거부한다. (지호가 Survey 도메인에서 먼저
+// 추가한 예외를 Response 도메인에서도 그대로 재사용 — 중복 정의였던 걸 병합.)
 export class AccountNotActiveException extends BusinessException {
   constructor() {
-    super('활성 상태의 계정만 응답할 수 있습니다.', HttpStatus.FORBIDDEN);
+    super('활성 회원만 이용할 수 있는 기능입니다.', HttpStatus.FORBIDDEN);
   }
 }
 

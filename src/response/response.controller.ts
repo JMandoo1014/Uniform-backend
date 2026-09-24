@@ -1,4 +1,11 @@
-import { Body, Controller, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/types/jwt-payload.type';
@@ -12,10 +19,7 @@ export class ResponseController {
   constructor(private readonly responseService: ResponseService) {}
 
   @Post()
-  start(
-    @CurrentUser() user: JwtPayload,
-    @Param('surveyId') surveyId: string,
-  ) {
+  start(@CurrentUser() user: JwtPayload, @Param('surveyId') surveyId: string) {
     return this.responseService.startOrResumeSession(user.sub, surveyId);
   }
 
