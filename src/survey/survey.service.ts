@@ -13,6 +13,7 @@ import {
 } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { TeamService } from '../team/team.service';
 import {
   AccountNotActiveException,
   SurveyNotDraftException,
@@ -42,16 +43,26 @@ const SURVEY_WITH_QUESTIONS_INCLUDE = {
 
 @Injectable()
 export class SurveyService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly teamService: TeamService,
+  ) {}
 
+  // Spec 3.2: 작성 공간으로 "내 설문" 또는 소속 팀을 고른다. 팀을 고르면 현재
+  // 팀원인지 확인한다(Team 모듈의 멤버십 검증을 그대로 재사용).
   async createDraft(
     userId: string,
     dto: CreateSurveyDraftDto,
   ): Promise<SurveyResponseDto> {
+    const isTeamDraft = dto.ownerType === 'team';
+    if (isTeamDraft) {
+      await this.teamService.assertActiveMembership(dto.teamId!, userId);
+    }
+
     const survey = await this.prisma.survey.create({
       data: {
-        ownerType: SurveyOwnerType.USER,
-        ownerId: userId,
+        ownerType: isTeamDraft ? SurveyOwnerType.TEAM : SurveyOwnerType.USER,
+        ownerId: isTeamDraft ? dto.teamId! : userId,
         title: dto.title,
         description: dto.description,
         status: SurveyStatus.DRAFT,
@@ -62,7 +73,7 @@ export class SurveyService {
   }
 
   async getDraft(userId: string, surveyId: string): Promise<SurveyResponseDto> {
-    const survey = await this.findOwnedSurveyOrThrow(userId, surveyId);
+    const survey = await this.findAccessibleSurveyOrThrow(userId, surveyId);
     return new SurveyResponseDto(survey);
   }
 
@@ -73,7 +84,7 @@ export class SurveyService {
     surveyId: string,
     dto: UpdateSurveyDraftDto,
   ): Promise<SurveyResponseDto> {
-    const current = await this.findOwnedSurveyOrThrow(userId, surveyId);
+    const current = await this.findAccessibleSurveyOrThrow(userId, surveyId);
     if (current.status !== SurveyStatus.DRAFT) {
       throw new SurveyNotDraftException();
     }
@@ -201,7 +212,7 @@ export class SurveyService {
       throw new AccountNotActiveException();
     }
 
-    const survey = await this.findOwnedSurveyOrThrow(userId, surveyId);
+    const survey = await this.findAccessibleSurveyOrThrow(userId, surveyId);
 
     if (survey.status === SurveyStatus.RECRUITING) {
       return new SurveyResponseDto(survey);
@@ -356,6 +367,30 @@ export class SurveyService {
     ) {
       throw new NotFoundException('설문을 찾을 수 없습니다.');
     }
+    return survey;
+  }
+
+  // Spec 3.2/4.1: 개인 초안은 작성자만, 팀 초안은 현재 팀원만 조회·수정할 수 있다.
+  private async findAccessibleSurveyOrThrow(
+    userId: string,
+    surveyId: string,
+  ): Promise<SurveyWithQuestions> {
+    const survey = await this.prisma.survey.findUnique({
+      where: { id: surveyId },
+      include: SURVEY_WITH_QUESTIONS_INCLUDE,
+    });
+    if (!survey) {
+      throw new NotFoundException('설문을 찾을 수 없습니다.');
+    }
+
+    if (survey.ownerType === SurveyOwnerType.USER) {
+      if (survey.ownerId !== userId) {
+        throw new NotFoundException('설문을 찾을 수 없습니다.');
+      }
+    } else {
+      await this.teamService.assertActiveMembership(survey.ownerId, userId);
+    }
+
     return survey;
   }
 }

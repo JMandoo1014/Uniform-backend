@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { TeamService } from '../team/team.service';
 import { AccountNotActiveException } from '../common/exceptions/business.exception';
 import { SurveyService } from './survey.service';
 
@@ -21,7 +22,11 @@ describe('SurveyService.publish — active account gate', () => {
     };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [SurveyService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        SurveyService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TeamService, useValue: {} },
+      ],
     }).compile();
 
     service = module.get<SurveyService>(SurveyService);
