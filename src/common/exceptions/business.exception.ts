@@ -138,3 +138,14 @@ export class AnswerValidationException extends HttpException {
     super({ message: errors }, HttpStatus.BAD_REQUEST);
   }
 }
+
+// Spec 8.3: "마감/보관" 탭의 설문만 보관 또는 보관 해제할 수 있고, 이미 목표
+// 상태인 설문을 다시 같은 방향으로 토글할 수는 없다.
+export class SurveyArchiveNotAllowedException extends BusinessException {
+  constructor() {
+    super(
+      '마감 또는 보관 상태의 설문만 보관 설정을 바꿀 수 있습니다.',
+      HttpStatus.CONFLICT,
+    );
+  }
+}
