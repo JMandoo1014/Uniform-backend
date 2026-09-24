@@ -69,6 +69,29 @@ enum SurveyQuestionType {
   ETC
 }
 
+enum ResponseSessionStatus {
+  IN_PROGRESS
+  SUBMITTED
+}
+
+// Spec 8.4: notification catalog. Team-domain events (team join/publish/leader
+// change/disband) are written here too so Dashboard recent-activity (12.3 ⑩)
+// can reuse one table instead of a separate activity log.
+enum NotificationType {
+  SURVEY_CLOSED
+  TEAM_JOINED
+  TEAM_SURVEY_PUBLISHED
+  TEAM_LEADER_CHANGED
+  TEAM_DISBANDED
+  SEASON_ENDED
+  REWARD_SELECTED
+  REWARD_SENT
+  PURGE_WARNING
+  SURVEY_REMOVED
+  ACCOUNT_RESTRICTED
+  NICKNAME_FORCED
+}
+
 model User {
   id                 String            @id @default(uuid())
   email              String?           @unique
@@ -81,6 +104,8 @@ model User {
   marketingOptIn     Boolean           @default(false)
   status             UserStatus        @default(PENDING_VERIFICATION)
   agreedTermsVersion String
+  // Spec 10.1: admin accounts are granted by the dev team, not self-service signup.
+  isAdmin            Boolean           @default(false)
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
 
@@ -99,6 +124,14 @@ model User {
   profileHistories UserProfileHistory[]
   ledTeams         Team[]               @relation("TeamLeader")
   teamMemberships  TeamMember[]
+
+  responseSessions   ResponseSession[]
+  leaderboardScores  LeaderboardScore[]
+  leaderboardRewards LeaderboardReward[]
+  notifications      Notification[]
+  restrictions       UserRestriction[]   @relation("RestrictedUser")
+  restrictionsIssued UserRestriction[]   @relation("RestrictionIssuedBy")
+  adminActionLogs    AdminActionLog[]    @relation("AdminActor")
 
   @@map("users")
 }
@@ -186,7 +219,13 @@ model Survey {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
-  questions SurveyQuestion[]
+  // Added for the Response domain (deferred here per the 2026-09-24 decision
+  // log entry "GET /surveys 응답에서 responseCount 필드 제외" — now backed by
+  // real submission counts, 지호 쪽 list/detail endpoints can start returning it).
+  responseCount Int @default(0)
+
+  questions        SurveyQuestion[]
+  responseSessions ResponseSession[]
 
   @@index([ownerType, ownerId])
   @@map("surveys")
@@ -226,4 +265,190 @@ model SurveyOption {
 
   @@unique([questionId, orderNo])
   @@map("survey_options")
+}
+
+// ============================================================
+// Response domain (5장) — 응답 세션과 답변
+// ============================================================
+
+// Spec: "응답 세션 | 한 회원이 설문에 답하는 작업 기록. 중단 후 이어서 답할 때 쓴다."
+// One session per (survey, user) — starting again just resumes the existing one.
+model ResponseSession {
+  id          String                @id @default(uuid())
+  surveyId    String
+  userId      String
+  status      ResponseSessionStatus @default(IN_PROGRESS)
+  startedAt   DateTime              @default(now())
+  submittedAt DateTime?
+
+  // Spec 5.4: whether the respondent dismissed the same-scale-answer warning
+  // and submitted anyway (kept for admin review, 10.4/6.6).
+  sameScaleWarningAcknowledged Boolean @default(false)
+
+  // Spec 10.2/10.4: admin can exclude a fraudulent submission from result
+  // aggregation and claw back its leaderboard point without deleting the row.
+  excludedAt        DateTime?
+  excludedReason    String?
+  excludedByAdminId String?
+
+  survey  Survey            @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answers SessionAnswer[]
+  score   LeaderboardScore?
+
+  @@unique([surveyId, userId])
+  @@index([userId])
+  @@map("response_sessions")
+}
+
+// One row per question per session; upserted on autosave (PATCH .../answers)
+// and left in place after submit as the finalized answer record.
+model SessionAnswer {
+  id         String   @id @default(uuid())
+  sessionId  String
+  questionId String
+  // Json because the shape varies by question type: string (single/short/etc),
+  // string[] (multiple), number (scale).
+  value      Json
+  updatedAt  DateTime @updatedAt
+
+  session ResponseSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, questionId])
+  @@map("session_answers")
+}
+
+// ============================================================
+// Leaderboard domain (6장)
+// ============================================================
+
+// One row per awarded point (always 1, per submission). Weekly rank is
+// SUM(points) grouped by (userId, weekStart) — computed at query time per
+// spec 6.4 "실시간 자동 갱신은 필수가 아니다", no separate rank cache needed.
+model LeaderboardScore {
+  id           String   @id @default(uuid())
+  userId       String
+  submissionId String   @unique
+  // KST Monday 00:00 of the week the submission landed in (spec 6.2).
+  weekStart    DateTime
+  points       Int      @default(1)
+  awardedAt    DateTime @default(now())
+
+  // Spec 10.4: admin can deduct a fraudulent point; row is kept, not deleted.
+  revokedAt        DateTime?
+  revokedReason    String?
+  revokedByAdminId String?
+
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  submission ResponseSession @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([weekStart, userId])
+  @@map("leaderboard_scores")
+}
+
+// Singleton row (id fixed to "default"). Spec 6.3: reward is TBD, admin edits
+// the announcement text shown on the leaderboard instead of a hardcoded value.
+model LeaderboardConfig {
+  id               String   @id @default("default")
+  rewardText       String   @default("보상은 추후 공지")
+  tieRuleText      String   @default("동점자의 보상 대상자는 무작위 추첨으로 선정됩니다.")
+  updatedAt        DateTime @updatedAt
+  updatedByAdminId String?
+
+  @@map("leaderboard_config")
+}
+
+// Spec 6.5/10.4: tie-break lottery for reward ranks. One draw per week,
+// never re-run ("재실행 불가").
+model LeaderboardLottery {
+  id                String   @id @default(uuid())
+  weekStart         DateTime @unique
+  result            Json
+  executedAt        DateTime @default(now())
+  executedByAdminId String
+
+  @@map("leaderboard_lotteries")
+}
+
+// Spec 6.3/10.4: reward send record, also what GET /mypage/coupons reads.
+model LeaderboardReward {
+  id            String   @id @default(uuid())
+  userId        String
+  weekStart     DateTime
+  rank          Int
+  couponType    String
+  sentAt        DateTime @default(now())
+  sentByAdminId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weekStart])
+  @@index([weekStart])
+  @@map("leaderboard_rewards")
+}
+
+// ============================================================
+// Notification (8.4절) — Dashboard 최근활동(12.3 ⑩)이 재사용하는 테이블.
+// Team 도메인 이벤트(가입/게시/팀장변경/해산)도 지호 쪽에서 이 테이블에 씀.
+// ============================================================
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  message   String
+  targetUrl String?
+  emailSent Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+// ============================================================
+// Admin domain (10장)
+// ============================================================
+
+// Spec 10.1: "모든 조치는 조치자·시각·대상·사유와 함께 기록하고 지우지 않는다."
+// Catch-all audit trail for admin actions that don't already have a
+// structured home (survey removal/restore, forced nickname change). Actions
+// with richer structured data (restriction, lottery, reward send, score
+// revoke) live in their own tables above/below instead of duplicating here.
+model AdminActionLog {
+  id         String   @id @default(uuid())
+  adminId    String
+  action     String
+  targetType String
+  targetId   String
+  reason     String?
+  memo       String?
+  createdAt  DateTime @default(now())
+
+  admin User @relation("AdminActor", fields: [adminId], references: [id])
+
+  @@index([targetType, targetId])
+  @@map("admin_action_logs")
+}
+
+// Spec 10.3: 이용 제한/해제. Kept separate from User.status/UserStatusHistory
+// (both already exist, owned by 지호's User domain) so duration/lift tracking
+// doesn't require touching that shared table.
+model UserRestriction {
+  id               String    @id @default(uuid())
+  userId           String
+  reason           String
+  durationDays     Int?
+  startedAt        DateTime  @default(now())
+  endsAt           DateTime?
+  liftedAt         DateTime?
+  liftedReason     String?
+  createdByAdminId String
+
+  user           User @relation("RestrictedUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdByAdmin User @relation("RestrictionIssuedBy", fields: [createdByAdminId], references: [id])
+
+  @@index([userId])
+  @@map("user_restrictions")
 }
