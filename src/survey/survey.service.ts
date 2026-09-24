@@ -22,6 +22,7 @@ import {
   SurveyResponseDto,
   SurveyWithQuestions,
 } from './dto/survey-response.dto';
+import { validatePublishableSurvey } from './survey-publish.validator';
 import { SCALE_MAX, SCALE_MIN } from './survey.constants';
 
 const SURVEY_WITH_QUESTIONS_INCLUDE = {
@@ -167,6 +168,53 @@ export class SurveyService {
     }
 
     return new SurveyResponseDto(updated);
+  }
+
+  async deleteDraft(userId: string, surveyId: string): Promise<void> {
+    const survey = await this.findOwnedSurveyOrThrow(userId, surveyId);
+    if (survey.status !== SurveyStatus.DRAFT) {
+      throw new SurveyNotDraftException();
+    }
+    await this.prisma.survey.delete({ where: { id: surveyId } });
+  }
+
+  // Spec 4.5: 게시는 4.3 규칙을 전부 검사한 뒤 상태를 RECRUITING으로 바꾼다.
+  // "같은 게시 요청이 반복되어도 설문은 하나만 만든다" — DRAFT 조건부
+  // update로 원자적으로 처리하고, 이미 게시된 상태면 그 결과를 그대로 반환한다.
+  async publish(userId: string, surveyId: string): Promise<SurveyResponseDto> {
+    const survey = await this.findOwnedSurveyOrThrow(userId, surveyId);
+
+    if (survey.status === SurveyStatus.RECRUITING) {
+      return new SurveyResponseDto(survey);
+    }
+    if (survey.status !== SurveyStatus.DRAFT) {
+      throw new SurveyNotDraftException();
+    }
+
+    const errors = validatePublishableSurvey(survey);
+    if (errors.length > 0) {
+      throw new BadRequestException(errors);
+    }
+
+    const { count } = await this.prisma.survey.updateMany({
+      where: { id: surveyId, status: SurveyStatus.DRAFT },
+      data: {
+        status: SurveyStatus.RECRUITING,
+        publishedAt: new Date(),
+        version: { increment: 1 },
+      },
+    });
+
+    const published = await this.prisma.survey.findUniqueOrThrow({
+      where: { id: surveyId },
+      include: SURVEY_WITH_QUESTIONS_INCLUDE,
+    });
+
+    if (count === 0 && published.status !== SurveyStatus.RECRUITING) {
+      throw new SurveyNotDraftException();
+    }
+
+    return new SurveyResponseDto(published);
   }
 
   private async findOwnedSurveyOrThrow(

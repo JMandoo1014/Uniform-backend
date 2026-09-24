@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -39,5 +42,17 @@ export class SurveyController {
     @Body() dto: UpdateSurveyDraftDto,
   ) {
     return this.surveyService.updateDraft(user.sub, id, dto);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('drafts/:id/publish')
+  publish(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.surveyService.publish(user.sub, id);
+  }
+
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Delete('drafts/:id')
+  async deleteDraft(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    await this.surveyService.deleteDraft(user.sub, id);
   }
 }
