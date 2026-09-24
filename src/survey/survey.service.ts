@@ -20,11 +20,13 @@ import {
   SurveyVersionConflictException,
 } from '../common/exceptions/business.exception';
 import { kstDateStringToUtcEndOfDay } from '../common/utils/kst-date.util';
+import { validateSubmittedAnswers } from '../response/response-answer.validator';
 import { CreateSurveyDraftDto } from './dto/create-survey-draft.dto';
 import { UpdateSurveyDraftDto } from './dto/update-survey-draft.dto';
 import { ListSurveysQueryDto } from './dto/list-surveys-query.dto';
 import { MoveToTeamDto } from './dto/move-to-team.dto';
 import { CopySurveyDto } from './dto/copy-survey.dto';
+import { PreviewResponseDto } from './dto/preview-response.dto';
 import {
   SurveyResponseDto,
   SurveyWithQuestions,
@@ -335,10 +337,7 @@ export class SurveyService {
           throw new NotFoundException('설문을 찾을 수 없습니다.');
         }
       } else {
-        await this.teamService.assertActiveMembership(
-          survey.ownerId,
-          viewerId,
-        );
+        await this.teamService.assertActiveMembership(survey.ownerId, viewerId);
       }
     }
 
@@ -429,6 +428,23 @@ export class SurveyService {
     });
 
     return { newSurveyId: created.id };
+  }
+
+  // Spec 4.1 "게시 전 확인": 실제 제출 검증 로직(Response 도메인)을 그대로 재사용해
+  // 집계·점수에 반영되지 않는 시험 응답을 검사한다. Response 테이블에는 아무 것도
+  // 쓰지 않는다.
+  async previewResponse(
+    userId: string,
+    surveyId: string,
+    dto: PreviewResponseDto,
+  ): Promise<{ valid: boolean; errors: string[] }> {
+    const survey = await this.findAccessibleSurveyOrThrow(userId, surveyId);
+    if (survey.status !== SurveyStatus.DRAFT) {
+      throw new SurveyNotDraftException();
+    }
+
+    const errors = validateSubmittedAnswers(survey, dto.answers);
+    return { valid: errors.length === 0, errors };
   }
 
   private async findOwnedSurveyOrThrow(

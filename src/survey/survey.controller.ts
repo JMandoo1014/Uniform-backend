@@ -20,6 +20,7 @@ import { UpdateSurveyDraftDto } from './dto/update-survey-draft.dto';
 import { ListSurveysQueryDto } from './dto/list-surveys-query.dto';
 import { MoveToTeamDto } from './dto/move-to-team.dto';
 import { CopySurveyDto } from './dto/copy-survey.dto';
+import { PreviewResponseDto } from './dto/preview-response.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('surveys')
@@ -78,6 +79,16 @@ export class SurveyController {
     @Body() dto: CopySurveyDto,
   ) {
     return this.surveyService.copySurvey(user.sub, id, dto);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('drafts/:id/preview-response')
+  previewResponse(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: PreviewResponseDto,
+  ) {
+    return this.surveyService.previewResponse(user.sub, id, dto);
   }
 
   @Get()
