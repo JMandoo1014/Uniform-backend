@@ -5,12 +5,15 @@ import { UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { parseDurationToMs } from '../common/utils/duration.util';
+import { BCRYPT_SALT_ROUNDS } from '../common/constants/password.constant';
 import {
+  AccountWithdrawnException,
   EmailAlreadyExistsException,
   EmailNotVerifiedException,
   InvalidCredentialsException,
   InvalidVerificationTokenException,
   NicknameAlreadyExistsException,
+  RecentlyWithdrawnEmailException,
 } from '../common/exceptions/business.exception';
 import { UserService } from '../user/user.service';
 import { SignupDto } from './dto/signup.dto';
@@ -18,8 +21,6 @@ import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { JwtPayload } from './types/jwt-payload.type';
-
-const SALT_ROUNDS = 10;
 
 @Injectable()
 export class AuthService {
@@ -30,18 +31,23 @@ export class AuthService {
   ) {}
 
   async signup(dto: SignupDto) {
-    const [existingEmail, existingNickname] = await Promise.all([
-      this.userService.findByEmail(dto.email),
-      this.userService.findByNickname(dto.nickname),
-    ]);
+    const [existingEmail, existingNickname, recentlyWithdrawn] =
+      await Promise.all([
+        this.userService.findByEmail(dto.email),
+        this.userService.findByNickname(dto.nickname),
+        this.userService.isEmailBlockedByRecentWithdrawal(dto.email),
+      ]);
     if (existingEmail) {
       throw new EmailAlreadyExistsException();
     }
     if (existingNickname) {
       throw new NicknameAlreadyExistsException();
     }
+    if (recentlyWithdrawn) {
+      throw new RecentlyWithdrawnEmailException();
+    }
 
-    const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_SALT_ROUNDS);
     const emailVerificationToken = randomBytes(32).toString('hex');
     const ttl = this.configService.get<string>(
       'EMAIL_VERIFICATION_TOKEN_EXPIRES_IN',
@@ -109,8 +115,11 @@ export class AuthService {
     if (user.status === UserStatus.PENDING_VERIFICATION) {
       throw new EmailNotVerifiedException();
     }
+    if (user.status === UserStatus.WITHDRAWN) {
+      throw new AccountWithdrawnException();
+    }
 
-    return this.issueTokens({ sub: user.id, email: user.email });
+    return this.issueTokens({ sub: user.id, email: dto.email });
   }
 
   private async issueTokens(payload: JwtPayload): Promise<TokenResponseDto> {

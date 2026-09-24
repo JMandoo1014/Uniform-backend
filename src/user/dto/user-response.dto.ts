@@ -2,13 +2,14 @@ import { User } from '@prisma/client';
 
 export class UserResponseDto {
   id: string;
-  email: string;
-  nickname: string;
+  email: User['email'];
+  nickname: User['nickname'];
   gender: User['gender'];
   grade: User['grade'];
   majorField: User['majorField'];
   enrollmentStatus: User['enrollmentStatus'];
   marketingOptIn: boolean;
+  marketingOptInChangedAt: User['marketingOptInChangedAt'];
   status: User['status'];
   createdAt: Date;
 
@@ -21,6 +22,7 @@ export class UserResponseDto {
     this.majorField = user.majorField;
     this.enrollmentStatus = user.enrollmentStatus;
     this.marketingOptIn = user.marketingOptIn;
+    this.marketingOptInChangedAt = user.marketingOptInChangedAt;
     this.status = user.status;
     this.createdAt = user.createdAt;
   }

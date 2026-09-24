@@ -35,3 +35,30 @@ export class EmailNotVerifiedException extends BusinessException {
     super('이메일 인증이 완료되지 않았습니다.', HttpStatus.FORBIDDEN);
   }
 }
+
+export class NoProfileChangesException extends BusinessException {
+  constructor() {
+    super('변경할 값이 없습니다.', HttpStatus.BAD_REQUEST);
+  }
+}
+
+export class CurrentPasswordMismatchException extends BusinessException {
+  constructor() {
+    super('현재 비밀번호가 올바르지 않습니다.', HttpStatus.UNAUTHORIZED);
+  }
+}
+
+export class AccountWithdrawnException extends BusinessException {
+  constructor() {
+    super('탈퇴한 계정입니다.', HttpStatus.FORBIDDEN);
+  }
+}
+
+export class RecentlyWithdrawnEmailException extends BusinessException {
+  constructor() {
+    super(
+      '탈퇴 후 30일 동안은 같은 이메일로 다시 가입할 수 없습니다.',
+      HttpStatus.CONFLICT,
+    );
+  }
+}

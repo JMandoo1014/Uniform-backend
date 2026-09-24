@@ -29,9 +29,16 @@
 - 목표 인원: 1~100명
 - 마감일: 오늘 이후 날짜만 허용, 단 "오늘"도 유효한 마감일임 (명세서 1.4절, 4.5절)
 
-## 담당 범위 (이 레포 = 지호 담당)
+## 담당 범위 (이 레포는 지호·기찬 공용 모노레포)
 
-Auth · User · Team · Survey(제작~게시)만 이 레포에서 구현한다. Response · Leaderboard · Result · MyPage · Dashboard · Support · Admin은 팀원(기찬)의 별도 레포 담당이다.
+같은 NestJS 앱, 같은 Prisma 스키마를 두 사람이 도메인만 나눠서 함께 쓴다.
+
+- **지호**: Auth · User · Team · Survey(제작~게시)
+- **기찬**: Response · Leaderboard · Result · MyPage · Dashboard · Support · Admin
+
+다른 사람 담당 도메인의 모듈 구조나 기존 API 계약을 바꿔야 할 일이 생기면, 마음대로 바꾸지 말고 먼저 사용자에게 "이건 원래 반대편(지호/기찬) 담당 영역인데 바꿔도 되는지" 확인할 것. `schema.prisma`는 두 도메인이 공유하므로 특히 조심 — 다른 도메인이 이미 쓰고 있는 모델/필드를 건드릴 땐 반드시 먼저 확인.
+
+브랜치는 Git Flow: `main`(초기 세팅용 스캐폴드만) → `develop`(통합) → `feature/*`(도메인별 작업). `develop`/`main`은 브랜치 보호 규칙으로 PR 없이 직접 push가 막혀 있다.
 
 ## 아키텍처 원칙
 
