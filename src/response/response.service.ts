@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
+  NotificationType,
   Prisma,
   ResponseSessionStatus,
   SurveyOwnerType,
@@ -180,6 +181,17 @@ export class ResponseService {
 
       const score = await tx.leaderboardScore.create({
         data: { userId, submissionId: sessionId, weekStart, points: 1 },
+      });
+
+      // Spec 8.5 / 12.3⑨: Dashboard "최근 활동" 피드가 재사용하는 알림 기록 —
+      // 제출자 본인 앞으로 한 건 남긴다.
+      await tx.notification.create({
+        data: {
+          userId,
+          type: NotificationType.RESPONSE_SUBMITTED,
+          message: `"${survey.title}" 설문에 응답을 제출했습니다.`,
+          targetUrl: `/surveys/${surveyId}/result`,
+        },
       });
 
       return score;

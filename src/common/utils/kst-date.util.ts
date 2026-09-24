@@ -46,6 +46,22 @@ export function formatKstDateTime(date: Date): string {
   return `${kst.getUTCFullYear()}-${pad(kst.getUTCMonth() + 1)}-${pad(kst.getUTCDate())} ${pad(kst.getUTCHours())}:${pad(kst.getUTCMinutes())}`;
 }
 
+/** Adds (or subtracts, for negative `days`) whole calendar days to a "YYYY-MM-DD" string. */
+export function addDaysToKstDateString(input: string, days: number): string {
+  const [year, month, day] = input.split('-').map(Number);
+  const shifted = new Date(
+    Date.UTC(year, month - 1, day) + days * 24 * 60 * 60 * 1000,
+  );
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
+}
+
+/** The instant KST 00:00:00.000 begins on the given "YYYY-MM-DD" calendar day. */
+export function kstDateStringToUtcStartOfDay(input: string): Date {
+  const [year, month, day] = input.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day) - KST_OFFSET_MS);
+}
+
 /** Spec 6.2: KST Monday 00:00 of the week containing `date` — the leaderboard's weekly bucket key. */
 export function getKstWeekStart(date: Date): Date {
   const kst = new Date(date.getTime() + KST_OFFSET_MS);
