@@ -23,6 +23,7 @@ import { kstDateStringToUtcEndOfDay } from '../common/utils/kst-date.util';
 import { CreateSurveyDraftDto } from './dto/create-survey-draft.dto';
 import { UpdateSurveyDraftDto } from './dto/update-survey-draft.dto';
 import { ListSurveysQueryDto } from './dto/list-surveys-query.dto';
+import { MoveToTeamDto } from './dto/move-to-team.dto';
 import {
   SurveyResponseDto,
   SurveyWithQuestions,
@@ -347,6 +348,33 @@ export class SurveyService {
       displayNameByOwnerId.get(survey.ownerId) ?? null,
       viewerId,
     );
+  }
+
+  // Spec 3.2: "내 초안도 게시 전이면 팀 초안으로 옮길 수 있다(팀 초안을 개인으로
+  // 되돌리기는 불가)" — 이동 대상은 반드시 내가 만든 개인 초안이어야 하므로
+  // findOwnedSurveyOrThrow(USER 전용)를 그대로 쓴다. 이미 팀 초안인 설문은 여기서
+  // 걸리지 않고 자연히 404가 된다(개인 소유가 아니므로).
+  async moveToTeam(
+    userId: string,
+    surveyId: string,
+    dto: MoveToTeamDto,
+  ): Promise<{ success: true }> {
+    const survey = await this.findOwnedSurveyOrThrow(userId, surveyId);
+    if (survey.status !== SurveyStatus.DRAFT) {
+      throw new SurveyNotDraftException();
+    }
+    await this.teamService.assertActiveMembership(dto.teamId, userId);
+
+    await this.prisma.survey.update({
+      where: { id: surveyId },
+      data: {
+        ownerType: SurveyOwnerType.TEAM,
+        ownerId: dto.teamId,
+        version: { increment: 1 },
+      },
+    });
+
+    return { success: true };
   }
 
   private async findOwnedSurveyOrThrow(
