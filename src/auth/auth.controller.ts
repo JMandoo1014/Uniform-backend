@@ -7,6 +7,7 @@ import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { PasswordResetRequestDto } from './dto/password-reset-request.dto';
 import { PasswordResetConfirmDto } from './dto/password-reset-confirm.dto';
 import { ChangePendingEmailDto } from './dto/change-pending-email.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -36,6 +37,12 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('refresh')
+  refresh(@Body() dto: RefreshTokenDto) {
+    return this.authService.refresh(dto);
   }
 
   @HttpCode(HttpStatus.OK)

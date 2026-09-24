@@ -13,6 +13,7 @@ import {
   EmailNotVerifiedException,
   InvalidCredentialsException,
   InvalidPasswordResetTokenException,
+  InvalidRefreshTokenException,
   InvalidVerificationTokenException,
   NicknameAlreadyExistsException,
   RecentlyWithdrawnEmailException,
@@ -25,7 +26,9 @@ import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { PasswordResetRequestDto } from './dto/password-reset-request.dto';
 import { PasswordResetConfirmDto } from './dto/password-reset-confirm.dto';
 import { ChangePendingEmailDto } from './dto/change-pending-email.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
+import { AccessTokenResponseDto } from './dto/access-token-response.dto';
 import { JwtPayload } from './types/jwt-payload.type';
 
 @Injectable()
@@ -122,6 +125,40 @@ export class AuthService {
     }
 
     return this.issueTokens({ sub: user.id, email: dto.email });
+  }
+
+  // Stateless refresh: refreshToken is not rotated on use (no server-side
+  // revocation list yet, so rotating would not add real security here). We
+  // still re-check the account's current status so a login-time-valid token
+  // stops working the moment the account is withdrawn/restricted afterwards.
+  async refresh(dto: RefreshTokenDto): Promise<AccessTokenResponseDto> {
+    let payload: JwtPayload;
+    try {
+      payload = await this.jwtService.verifyAsync<JwtPayload>(
+        dto.refreshToken,
+        { secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET') },
+      );
+    } catch {
+      throw new InvalidRefreshTokenException();
+    }
+
+    const user = await this.userService.findById(payload.sub);
+    if (!user || user.status !== UserStatus.ACTIVE) {
+      throw new InvalidRefreshTokenException();
+    }
+
+    const accessToken = await this.jwtService.signAsync(
+      { sub: user.id, email: payload.email },
+      {
+        secret: this.configService.getOrThrow<string>('JWT_SECRET'),
+        expiresIn: this.configService.get<string>(
+          'JWT_EXPIRES_IN',
+          '15m',
+        ) as JwtSignOptions['expiresIn'],
+      },
+    );
+
+    return { accessToken };
   }
 
   // Spec 2.2: "인증 대기" 상태에서 재발송 요청 가능. 계정 존재 여부를 노출하지
