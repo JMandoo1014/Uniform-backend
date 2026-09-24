@@ -1,5 +1,6 @@
 import {
   Injectable,
+  BadRequestException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,9 +10,19 @@ import {
   SurveyOwnerType,
   SurveyQuestionType,
 } from '@prisma/client';
+import archiver from 'archiver';
+import sharp from 'sharp';
 import { PrismaService } from '../prisma/prisma.service';
-import { toKstDateString } from '../common/utils/kst-date.util';
+import {
+  formatKstDateTime,
+  toKstDateString,
+} from '../common/utils/kst-date.util';
 import { maskSensitiveText } from '../common/utils/mask-sensitive-text.util';
+import {
+  buildMultiChoiceSvg,
+  buildScaleSvg,
+  buildSingleChoiceSvg,
+} from './chart-svg.util';
 import {
   DailyTrendPointDto,
   QuestionResultDto,
@@ -73,6 +84,115 @@ export class ResultService {
         .sort((a, b) => a.orderNo - b.orderNo)
         .map((question) => this.buildQuestionResult(question, included)),
     });
+  }
+
+  // Spec 7.3: 문항별 PNG. "제외: 단답·서술 문항과 응답 원문은 내려받지 않는다"
+  // — 그래프가 없는 유형은 애초에 이미지가 존재하지 않으므로 400으로 거부한다.
+  async getQuestionImage(
+    userId: string,
+    surveyId: string,
+    questionId: string,
+  ): Promise<Buffer> {
+    const survey = await this.loadSurveyOrThrow(surveyId);
+    await this.assertCanView(survey, userId);
+
+    const question = survey.questions.find((q) => q.stableKey === questionId);
+    if (!question) {
+      throw new NotFoundException('문항을 찾을 수 없습니다.');
+    }
+
+    const sessions = await this.loadIncludedSessions(surveyId);
+    const result = this.buildQuestionResult(question, sessions);
+    const svg = this.renderQuestionSvg(result);
+    if (!svg) {
+      throw new BadRequestException(
+        '단답·서술 문항은 그래프 이미지를 제공하지 않습니다.',
+      );
+    }
+    return sharp(Buffer.from(svg)).png().toBuffer();
+  }
+
+  // Spec 7.3: 전체 내려받기 — 그래프가 있는 문항들의 PNG를 ZIP으로 묶는다
+  // (문항별 파일이라 "기준 시각"이 문항마다 남고, 한 장 합성보다 구현이 단순함).
+  async getAllImagesZip(userId: string, surveyId: string): Promise<Buffer> {
+    const survey = await this.loadSurveyOrThrow(surveyId);
+    await this.assertCanView(survey, userId);
+
+    const sessions = await this.loadIncludedSessions(surveyId);
+    const chartable = [...survey.questions]
+      .sort((a, b) => a.orderNo - b.orderNo)
+      .map((question) => this.buildQuestionResult(question, sessions))
+      .map((result) => ({ result, svg: this.renderQuestionSvg(result) }))
+      .filter(
+        (entry): entry is { result: QuestionResultDto; svg: string } =>
+          entry.svg !== null,
+      );
+
+    if (chartable.length === 0) {
+      throw new BadRequestException('내려받을 그래프 문항이 없습니다.');
+    }
+
+    return new Promise((resolve, reject) => {
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      const chunks: Buffer[] = [];
+      archive.on('data', (chunk: Buffer) => chunks.push(chunk));
+      archive.on('error', reject);
+      archive.on('end', () => resolve(Buffer.concat(chunks)));
+
+      void Promise.all(
+        chartable.map(async ({ result, svg }) => {
+          const png = await sharp(Buffer.from(svg)).png().toBuffer();
+          archive.append(png, {
+            name: `Q${result.orderNo}_${result.questionId}.png`,
+          });
+        }),
+      ).then(() => archive.finalize());
+    });
+  }
+
+  private renderQuestionSvg(result: QuestionResultDto): string | null {
+    const asOf = formatKstDateTime(new Date());
+    switch (result.type) {
+      case SurveyQuestionType.SINGLE_CHOICE:
+        return buildSingleChoiceSvg(
+          result.orderNo,
+          result.questionText,
+          result.responseCount,
+          asOf,
+          result.options ?? [],
+        );
+      case SurveyQuestionType.MULTI_CHOICE:
+        return buildMultiChoiceSvg(
+          result.orderNo,
+          result.questionText,
+          result.responseCount,
+          asOf,
+          result.options ?? [],
+        );
+      case SurveyQuestionType.SCALE:
+        return buildScaleSvg(
+          result.orderNo,
+          result.questionText,
+          result.responseCount,
+          asOf,
+          result.scaleCounts ?? [],
+          result.average ?? 0,
+          result.minScaleLabel ?? null,
+          result.maxScaleLabel ?? null,
+        );
+      default:
+        return null;
+    }
+  }
+
+  private async loadIncludedSessions(
+    surveyId: string,
+  ): Promise<SessionWithAnswers[]> {
+    const sessions = await this.prisma.responseSession.findMany({
+      where: { surveyId, status: ResponseSessionStatus.SUBMITTED },
+      include: SESSIONS_WITH_ANSWERS_INCLUDE,
+    });
+    return sessions.filter((s) => !s.excludedAt);
   }
 
   private buildDailyTrend(
