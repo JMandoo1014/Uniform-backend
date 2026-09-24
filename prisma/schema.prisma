@@ -70,29 +70,57 @@ enum SurveyQuestionType {
 }
 
 model User {
-  id                 String           @id @default(uuid())
-  email              String           @unique
+  id                 String            @id @default(uuid())
+  email              String?           @unique
   passwordHash       String
-  nickname           String           @unique
-  gender             Gender
-  grade              GradeLevel
-  majorField         MajorField
-  enrollmentStatus   EnrollmentStatus
-  marketingOptIn     Boolean          @default(false)
-  status             UserStatus       @default(PENDING_VERIFICATION)
+  nickname           String?           @unique
+  gender             Gender?
+  grade              GradeLevel?
+  majorField         MajorField?
+  enrollmentStatus   EnrollmentStatus?
+  marketingOptIn     Boolean           @default(false)
+  status             UserStatus        @default(PENDING_VERIFICATION)
   agreedTermsVersion String
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
 
   // Not in the original spec; required to implement POST /auth/verify-email.
   emailVerificationToken          String?   @unique
   emailVerificationTokenExpiresAt DateTime?
 
-  statusHistories UserStatusHistory[]
-  ledTeams        Team[]              @relation("TeamLeader")
-  teamMemberships TeamMember[]
+  // Spec 8.1 / 2.3: marketing opt-in changes only need the latest change timestamp.
+  marketingOptInChangedAt DateTime?
+
+  statusHistories  UserStatusHistory[]
+  profileHistories UserProfileHistory[]
+  ledTeams         Team[]               @relation("TeamLeader")
+  teamMemberships  TeamMember[]
 
   @@map("users")
+}
+
+// Spec 2.3: "변경 전후 값과 시각을 기록한다" for nickname/profile edits.
+model UserProfileHistory {
+  id        String   @id @default(uuid())
+  userId    String
+  field     String
+  oldValue  String?
+  newValue  String?
+  changedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_profile_histories")
+}
+
+// Spec 2.5: "탈퇴 이메일을 해시로 보관한다" to block re-signup for 30 days.
+model WithdrawnEmail {
+  id          String   @id @default(uuid())
+  emailHash   String   @unique
+  withdrawnAt DateTime @default(now())
+
+  @@map("withdrawn_emails")
 }
 
 model UserStatusHistory {
