@@ -1,6 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, UserStatus } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
+import { BCRYPT_SALT_ROUNDS } from '../common/constants/password.constant';
 import {
+  CurrentPasswordMismatchException,
   NicknameAlreadyExistsException,
   NoProfileChangesException,
 } from '../common/exceptions/business.exception';
@@ -141,6 +144,29 @@ export class UserService {
       const updated = await tx.user.update({ where: { id: userId }, data });
       await tx.userProfileHistory.createMany({ data: historyEntries });
       return updated;
+    });
+  }
+
+  // Spec 2.4: 마이페이지에서 현재 비밀번호를 확인한 뒤 바꾼다.
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    }
+
+    const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!matches) {
+      throw new CurrentPasswordMismatchException();
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
     });
   }
 }

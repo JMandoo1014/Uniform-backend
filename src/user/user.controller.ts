@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   NotFoundException,
   Patch,
   UseGuards,
@@ -12,6 +14,7 @@ import type { JwtPayload } from '../auth/types/jwt-payload.type';
 import { UserService } from './user.service';
 import { UserResponseDto } from './dto/user-response.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('users')
@@ -34,5 +37,18 @@ export class UserController {
   ) {
     const user = await this.userService.updateProfile(jwtUser.sub, dto);
     return new UserResponseDto(user);
+  }
+
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Patch('me/password')
+  async changePassword(
+    @CurrentUser() jwtUser: JwtPayload,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    await this.userService.changePassword(
+      jwtUser.sub,
+      dto.currentPassword,
+      dto.newPassword,
+    );
   }
 }
