@@ -11,6 +11,7 @@ import { ResultModule } from './result/result.module';
 import { MypageModule } from './mypage/mypage.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { SupportModule } from './support/support.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { SupportModule } from './support/support.module';
     MypageModule,
     DashboardModule,
     SupportModule,
+    AdminModule,
   ],
 })
 export class AppModule {}
