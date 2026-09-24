@@ -161,3 +161,58 @@ export class SurveyArchiveNotAllowedException extends BusinessException {
     );
   }
 }
+
+// Spec 3.1: "한 회원은 최대 3개 팀에 속할 수 있다."
+export class TeamJoinLimitExceededException extends BusinessException {
+  constructor() {
+    super(
+      '이미 3개의 팀에 속해 있어 더 가입할 수 없습니다.',
+      HttpStatus.CONFLICT,
+    );
+  }
+}
+
+// Spec 3.1: 팀 화면(멤버 목록·초대 링크 등)은 현재 팀원만 볼 수 있다.
+export class NotTeamMemberException extends BusinessException {
+  constructor() {
+    super('현재 팀원만 접근할 수 있습니다.', HttpStatus.FORBIDDEN);
+  }
+}
+
+// Spec 3.1: "팀장 포함 최대 6명."
+export class TeamFullException extends BusinessException {
+  constructor() {
+    super('팀 인원이 가득 찼습니다.', HttpStatus.CONFLICT);
+  }
+}
+
+// Spec 3.1: 재발급하면 이전 초대 링크는 즉시 무효화되므로, 존재하지 않거나
+// 무효화된 토큰은 동일하게 "유효하지 않음"으로 처리한다.
+export class InvalidInviteTokenException extends BusinessException {
+  constructor() {
+    super('유효하지 않은 초대 링크입니다.', HttpStatus.BAD_REQUEST);
+  }
+}
+
+export class AlreadyTeamMemberException extends BusinessException {
+  constructor() {
+    super('이미 가입한 팀입니다.', HttpStatus.CONFLICT);
+  }
+}
+
+// Spec 3.1: 초대 링크 관리·팀원 내보내기·팀장 넘기기·해산은 팀장만 가능.
+export class NotTeamLeaderException extends BusinessException {
+  constructor() {
+    super('팀장만 할 수 있는 작업입니다.', HttpStatus.FORBIDDEN);
+  }
+}
+
+// Spec 3.4: "팀장 나가기: 팀장을 다른 팀원에게 넘긴 뒤에만 나갈 수 있다."
+export class LeaderMustTransferBeforeLeavingException extends BusinessException {
+  constructor() {
+    super(
+      '팀장은 팀장을 위임한 뒤에만 팀을 나갈 수 있습니다.',
+      HttpStatus.CONFLICT,
+    );
+  }
+}
