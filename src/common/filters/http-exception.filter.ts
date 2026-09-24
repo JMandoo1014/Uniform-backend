@@ -26,11 +26,19 @@ export class HttpExceptionFilter implements ExceptionFilter {
       ? exception.getResponse()
       : 'Internal server error';
 
-    const message =
+    const responseObject =
       typeof exceptionResponse === 'string'
-        ? exceptionResponse
-        : ((exceptionResponse as { message?: string | string[] }).message ??
-          exceptionResponse);
+        ? { message: exceptionResponse }
+        : (exceptionResponse as { message?: string | string[] } & Record<
+            string,
+            unknown
+          >);
+    const { message } = responseObject;
+    const extra = Object.fromEntries(
+      Object.entries(responseObject).filter(
+        ([key]) => key !== 'message' && key !== 'statusCode',
+      ),
+    );
 
     if (!isHttpException) {
       this.logger.error(exception);
@@ -38,7 +46,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     response.status(status).json({
       statusCode: status,
-      message,
+      message: message ?? exceptionResponse,
+      ...extra,
       path: request.url,
       timestamp: new Date().toISOString(),
     });
