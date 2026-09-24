@@ -92,7 +92,11 @@ export class ResponseService {
       entries.map(([stableKey, value]) =>
         this.prisma.sessionAnswer.upsert({
           where: { sessionId_questionId: { sessionId, questionId: stableKey } },
-          create: { sessionId, questionId: stableKey, value: value as Prisma.InputJsonValue },
+          create: {
+            sessionId,
+            questionId: stableKey,
+            value: value as Prisma.InputJsonValue,
+          },
           update: { value: value as Prisma.InputJsonValue },
         }),
       ),
