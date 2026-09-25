@@ -229,6 +229,11 @@ model Survey {
   // real submission counts, 지호 쪽 list/detail endpoints can start returning it).
   responseCount Int @default(0)
 
+  // Spec 3.1 "팀 초안 삭제는 팀장 또는 만든 사람만" — ownerId is the team for a
+  // team-owned survey, so the original author needs its own field. USER-owned
+  // surveys back-fill this to ownerId (the two are the same person there).
+  creatorId String
+
   questions        SurveyQuestion[]
   responseSessions ResponseSession[]
 

@@ -80,6 +80,15 @@ export class TeamService {
     this.assertIsMember(team, userId);
   }
 
+  // Survey-Team 연동: 다른 도메인(Survey)이 "이 사용자가 이 팀의 팀장인지"만
+  // 확인하고 싶을 때 쓰는 공개 진입점. assertIsLeader처럼 던지지 않고 boolean을
+  // 돌려주는 이유는 호출 쪽이 "팀장 또는 만든 사람"처럼 OR 조건으로 합성해서
+  // 쓰기 때문이다.
+  async isTeamLeader(teamId: string, userId: string): Promise<boolean> {
+    const team = await this.findActiveTeamOrThrow(teamId);
+    return team.leaderId === userId;
+  }
+
   // Spec 3.1: 팀장은 언제든 링크를 새로 만들어 이전 링크를 무효로 할 수 있다.
   async regenerateInviteToken(
     userId: string,
