@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenAI, Schema, Type } from '@google/genai';
+import { FormMateGenerationFailedException } from '../../common/exceptions/business.exception';
 import {
   CREATABLE_SURVEY_QUESTION_TYPES,
   SCALE_MAX,
@@ -10,6 +11,7 @@ import {
   FormMateConversationTurn,
   FormMateGenerateResult,
 } from './formmate.types';
+import { FORMMATE_MAX_OUTPUT_TOKENS } from './formmate.constants';
 
 // Spec 4.2: 문항 하나의 "될 내용". DELETE_QUESTION일 때는 null.
 const QUESTION_AFTER_SCHEMA: Schema = {
@@ -94,7 +96,7 @@ const FORMMATE_RESPONSE_SCHEMA: Schema = {
             description:
               '사람이 한눈에 읽을 한 줄 설명 (예: "3번 문항 보기 추가").',
           },
-          targetQuestionId: {
+          targetStableKey: {
             type: Type.STRING,
             nullable: true,
             description:
@@ -113,19 +115,28 @@ const DEFAULT_MODEL = 'gemini-3.8-flash';
 
 @Injectable()
 export class FormMateGeminiService {
-  private readonly client: GoogleGenAI;
+  private client?: GoogleGenAI;
   private readonly model: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.client = new GoogleGenAI({
-      apiKey: this.configService.getOrThrow<string>('GEMINI_API_KEY'),
-    });
     this.model =
       this.configService.get<string>('GEMINI_MODEL') ?? DEFAULT_MODEL;
   }
 
+  // GEMINI_API_KEY가 없으면 이 서비스를 실제로 쓸 때만 실패하게 한다 — 이
+  // 서비스는 SurveyModule의 provider라, 생성자에서 즉시 클라이언트를 만들면
+  // 키 하나가 없다는 이유로 FormMate를 안 쓰는 나머지 백엔드 전체가 부팅에
+  // 실패한다(로컬 개발 환경·테스트 포함).
+  private getClient(): GoogleGenAI {
+    this.client ??= new GoogleGenAI({
+      apiKey: this.configService.getOrThrow<string>('GEMINI_API_KEY'),
+    });
+    return this.client;
+  }
+
   // Spec 4.2: 자유 텍스트 파싱이 아니라 responseSchema로 구조화 JSON을 강제해서
-  // 파싱 신뢰성을 확보한다.
+  // 파싱 신뢰성을 확보한다. 그래도 토큰 제한으로 응답이 잘리거나 모델이
+  // 스키마를 못 지키는 경우가 있을 수 있어 JSON.parse는 방어적으로 감싼다.
   async generateReply(
     systemInstruction: string,
     conversation: FormMateConversationTurn[],
@@ -135,21 +146,26 @@ export class FormMateGeminiService {
       parts: [{ text: turn.content }],
     }));
 
-    const response = await this.client.models.generateContent({
+    const response = await this.getClient().models.generateContent({
       model: this.model,
       contents,
       config: {
         systemInstruction,
         responseMimeType: 'application/json',
         responseSchema: FORMMATE_RESPONSE_SCHEMA,
+        maxOutputTokens: FORMMATE_MAX_OUTPUT_TOKENS,
       },
     });
 
     const text = response.text;
     if (!text) {
-      throw new Error('FormMate: Gemini 응답이 비어 있습니다.');
+      throw new FormMateGenerationFailedException();
     }
 
-    return JSON.parse(text) as FormMateGenerateResult;
+    try {
+      return JSON.parse(text) as FormMateGenerateResult;
+    } catch {
+      throw new FormMateGenerationFailedException();
+    }
   }
 }

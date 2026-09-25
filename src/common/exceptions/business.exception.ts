@@ -233,3 +233,15 @@ export class FormMateChangeNotApplicableException extends BusinessException {
     super('적용할 수 없는 상태의 제안입니다.', HttpStatus.CONFLICT);
   }
 }
+
+// Spec 4.2 FormMate: Gemini가 토큰 제한으로 응답을 자르거나 스키마를 어겨서
+// JSON.parse 자체가 실패하는 경우 — 클라이언트 잘못이 아니라 업스트림(AI) 응답
+// 문제이므로 502로 알린다.
+export class FormMateGenerationFailedException extends BusinessException {
+  constructor() {
+    super(
+      'FormMate 응답을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.',
+      HttpStatus.BAD_GATEWAY,
+    );
+  }
+}
