@@ -18,6 +18,7 @@ import {
   AccountNotActiveException,
   SurveyNotDraftException,
   SurveyVersionConflictException,
+  TeamDraftDeleteForbiddenException,
 } from '../common/exceptions/business.exception';
 import { kstDateStringToUtcEndOfDay } from '../common/utils/kst-date.util';
 import { validateSubmittedAnswers } from '../response/response-answer.validator';
@@ -67,6 +68,7 @@ export class SurveyService {
       data: {
         ownerType: isTeamDraft ? SurveyOwnerType.TEAM : SurveyOwnerType.USER,
         ownerId: isTeamDraft ? dto.teamId! : userId,
+        creatorId: userId,
         title: dto.title,
         description: dto.description,
         status: SurveyStatus.DRAFT,
@@ -196,13 +198,24 @@ export class SurveyService {
     return new SurveyResponseDto(updated);
   }
 
-  // TODO(survey-team-integration): 팀 초안 삭제 권한(spec 3.1 "팀장 또는 만든 사람")은
-  // 이번 PR 스코프 제외. Survey에 팀 내 생성자를 별도로 기록하는 필드(creatorId 등)가
-  // 없어서, 스키마 변경(기찬과 사전 협의 필요) 없이는 "만든 사람" 조건을 판별할 수 없음.
-  // 현재는 findOwnedSurveyOrThrow가 ownerType===USER를 강제하므로 팀 초안은 이 메서드로
-  // 아예 접근 자체가 안 됨(의도된 동작, 버그 아님) — 팀 초안 삭제 기능 자체가 미구현 상태.
+  // Spec 3.1: "팀 초안 삭제는 팀장 또는 만든 사람만." USER 초안은 기존 그대로
+  // 작성자 본인만. 팀 초안이 아예 안 보이는 것(비팀원)과 팀원이지만 권한이
+  // 없는 것(팀장도 만든 사람도 아님)은 구분한다 — 전자는 findAccessibleSurveyOrThrow가
+  // 그대로 403/404로 걸러주고, 후자만 여기서 별도로 거부한다.
   async deleteDraft(userId: string, surveyId: string): Promise<void> {
-    const survey = await this.findOwnedSurveyOrThrow(userId, surveyId);
+    const survey = await this.findAccessibleSurveyOrThrow(userId, surveyId);
+
+    if (survey.ownerType === SurveyOwnerType.TEAM) {
+      const isCreator = survey.creatorId === userId;
+      const isLeader = await this.teamService.isTeamLeader(
+        survey.ownerId,
+        userId,
+      );
+      if (!isCreator && !isLeader) {
+        throw new TeamDraftDeleteForbiddenException();
+      }
+    }
+
     if (survey.status !== SurveyStatus.DRAFT) {
       throw new SurveyNotDraftException();
     }
@@ -370,6 +383,10 @@ export class SurveyService {
     }
     await this.teamService.assertActiveMembership(dto.teamId, userId);
 
+    // creatorId is left untouched on purpose: findOwnedSurveyOrThrow already
+    // guarantees survey.ownerId === userId for a USER-owned draft, and
+    // createDraft always sets creatorId to that same userId, so it's already
+    // correct after the move.
     await this.prisma.survey.update({
       where: { id: surveyId },
       data: {
@@ -402,6 +419,9 @@ export class SurveyService {
       data: {
         ownerType: isTeamTarget ? SurveyOwnerType.TEAM : SurveyOwnerType.USER,
         ownerId: isTeamTarget ? dto.teamId! : userId,
+        // 복사는 새 초안을 "만드는" 행위이므로 원본의 creatorId를 물려받지 않고
+        // 복사를 실행한 사람을 만든 사람으로 기록한다.
+        creatorId: userId,
         title: source.title,
         description: source.description,
         status: SurveyStatus.DRAFT,

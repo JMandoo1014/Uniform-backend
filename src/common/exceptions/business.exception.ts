@@ -216,3 +216,12 @@ export class LeaderMustTransferBeforeLeavingException extends BusinessException 
     );
   }
 }
+
+// Spec 3.1: "팀 초안 삭제는 팀장 또는 만든 사람만." NotTeamLeaderException은
+// "팀장만"이라고 말해 이 규칙(팀장 또는 만든 사람)에는 메시지가 맞지 않는다 —
+// 만든 사람인 일반 팀원은 이 동작이 허용돼야 하므로 별도 예외로 둔다.
+export class TeamDraftDeleteForbiddenException extends BusinessException {
+  constructor() {
+    super('팀장 또는 만든 사람만 삭제할 수 있습니다.', HttpStatus.FORBIDDEN);
+  }
+}
