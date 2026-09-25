@@ -13,12 +13,13 @@ import {
 } from './formmate.types';
 import { FORMMATE_MAX_OUTPUT_TOKENS } from './formmate.constants';
 
-// Spec 4.2: 문항 하나의 "될 내용". DELETE_QUESTION일 때는 null.
+// Spec 4.2: 문항 하나의 "될 내용". 예전에는 객체 전체를 nullable로 두고
+// DELETE_QUESTION일 때만 null을 쓰게 했는데, 가벼운 모델이 ADD/UPDATE에서도
+// null을 골라 적용 불가능한 제안이 저장됐다 — 그래서 nullable을 없애고, after가
+// 필요 없는 DELETE_QUESTION은 아래 anyOf에서 after 자체가 없는 별도 모양으로 뺐다.
 const QUESTION_AFTER_SCHEMA: Schema = {
   type: Type.OBJECT,
-  nullable: true,
-  description:
-    'DELETE_QUESTION이면 null. 그 외 타입은 문항 전체 상태(부분 필드만 X, 항상 전체).',
+  description: '바뀐 뒤 문항의 전체 상태(바뀐 필드만이 아니라 항상 전체).',
   properties: {
     id: {
       type: Type.STRING,
@@ -66,7 +67,71 @@ const QUESTION_AFTER_SCHEMA: Schema = {
       },
     },
   },
-  required: ['type', 'questionText'],
+  // apply는 after로 문항을 통째로 교체하므로 바뀐 필드만 보내면 나머지(보기
+  // 목록·척도 설명 등)가 지워진다. 설명만으로는 모델이 바뀐 필드만 보내는
+  // 경우가 있어서, 해당 없는 필드도 null로라도 반드시 채우게 전부 required로 둔다.
+  required: [
+    'type',
+    'questionText',
+    'required',
+    'minSelect',
+    'maxSelect',
+    'minScaleLabel',
+    'maxScaleLabel',
+    'options',
+  ],
+};
+
+const CHANGE_SUMMARY_SCHEMA: Schema = {
+  type: Type.STRING,
+  description: '사람이 한눈에 읽을 한 줄 설명 (예: "3번 문항 보기 추가").',
+};
+
+const TARGET_STABLE_KEY_SCHEMA: Schema = {
+  type: Type.STRING,
+  description:
+    '대상 문항의 id(stableKey). 대화 컨텍스트로 전달된 현재 문항 목록의 id만 쓸 것.',
+};
+
+// 변경 타입마다 필수 필드가 다르다 — 조건부 required를 anyOf 세 갈래로 표현한다.
+// (서버는 그래도 모델이 어길 수 있다고 보고 sendMessage에서 한 번 더 검증한다.)
+const FORMMATE_CHANGE_SCHEMA: Schema = {
+  anyOf: [
+    {
+      type: Type.OBJECT,
+      description: '새 문항 추가.',
+      properties: {
+        type: { type: Type.STRING, enum: ['ADD_QUESTION'] },
+        summary: CHANGE_SUMMARY_SCHEMA,
+        after: QUESTION_AFTER_SCHEMA,
+      },
+      required: ['type', 'summary', 'after'],
+    },
+    {
+      type: Type.OBJECT,
+      description: '기존 문항 수정(문구·설정·보기).',
+      properties: {
+        type: {
+          type: Type.STRING,
+          enum: ['UPDATE_QUESTION', 'UPDATE_OPTION'],
+        },
+        summary: CHANGE_SUMMARY_SCHEMA,
+        targetStableKey: TARGET_STABLE_KEY_SCHEMA,
+        after: QUESTION_AFTER_SCHEMA,
+      },
+      required: ['type', 'summary', 'targetStableKey', 'after'],
+    },
+    {
+      type: Type.OBJECT,
+      description: '기존 문항 삭제.',
+      properties: {
+        type: { type: Type.STRING, enum: ['DELETE_QUESTION'] },
+        summary: CHANGE_SUMMARY_SCHEMA,
+        targetStableKey: TARGET_STABLE_KEY_SCHEMA,
+      },
+      required: ['type', 'summary', 'targetStableKey'],
+    },
+  ],
 };
 
 const FORMMATE_RESPONSE_SCHEMA: Schema = {
@@ -79,33 +144,7 @@ const FORMMATE_RESPONSE_SCHEMA: Schema = {
     changes: {
       type: Type.ARRAY,
       description: '이번 답변에서 제안하는 설문 변경 목록. 없으면 빈 배열.',
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          type: {
-            type: Type.STRING,
-            enum: [
-              'ADD_QUESTION',
-              'UPDATE_QUESTION',
-              'DELETE_QUESTION',
-              'UPDATE_OPTION',
-            ],
-          },
-          summary: {
-            type: Type.STRING,
-            description:
-              '사람이 한눈에 읽을 한 줄 설명 (예: "3번 문항 보기 추가").',
-          },
-          targetStableKey: {
-            type: Type.STRING,
-            nullable: true,
-            description:
-              'ADD_QUESTION 이외 타입에서 대상 문항의 id(stableKey). 대화 컨텍스트로 전달된 현재 문항 목록의 id만 쓸 것.',
-          },
-          after: QUESTION_AFTER_SCHEMA,
-        },
-        required: ['type', 'summary'],
-      },
+      items: FORMMATE_CHANGE_SCHEMA,
     },
   },
   required: ['replyText', 'changes'],

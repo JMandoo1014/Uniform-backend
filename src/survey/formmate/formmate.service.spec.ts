@@ -2,11 +2,13 @@ import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   FormMateChangeStatus,
+  Prisma,
   SurveyQuestionType,
   SurveyStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  FormMateChangeInvalidException,
   FormMateChangeNotApplicableException,
   SurveyNotDraftException,
   SurveyVersionConflictException,
@@ -15,6 +17,13 @@ import { SurveyService } from '../survey.service';
 import { FormMateGeminiService } from './formmate-gemini.service';
 import { FormMateService } from './formmate.service';
 import { FormMateQuestionDraft } from './formmate.types';
+
+// FormMateGeminiService는 아래에서 useValue 목으로 갈아끼우므로 DI 토큰으로만
+// 쓴다. 실제 모듈을 불러오면 ESM 전용인 @nestjs/config를 Jest(CommonJS)가
+// require하다 스위트 전체가 로드 실패한다.
+jest.mock('./formmate-gemini.service', () => ({
+  FormMateGeminiService: class FormMateGeminiService {},
+}));
 
 type ReplaceSurveyQuestionsCall = [
   unknown,
@@ -261,7 +270,7 @@ describe('FormMateService', () => {
             type: 'UPDATE_QUESTION',
             summary: '존재하지 않는 문항 수정 시도',
             targetStableKey: 'no-such-question',
-            after: { questionText: 'x' },
+            after: { type: 'SHORT_ANSWER', questionText: '고친 질문' },
           },
         ],
       });
@@ -271,6 +280,92 @@ describe('FormMateService', () => {
 
       const result = await service.sendMessage('user-1', 'survey-1', {
         message: '아무 문항이나 고쳐줘',
+      });
+
+      expect(prisma.formMateProposedChange.create).not.toHaveBeenCalled();
+      expect(result.proposedChanges).toEqual([]);
+    });
+
+    // 실서버 QA: flash-lite가 ADD/UPDATE 제안의 after를 null로 주는 경우가
+    // 있었고, 그대로 저장된 제안은 apply 시점에 500으로 이어졌다.
+    it('drops ADD/UPDATE changes whose after is null or missing required fields, but keeps DELETE without after', async () => {
+      surveyService.getAccessibleSurveyOrThrow.mockResolvedValue(
+        buildDraftSurvey(),
+      );
+      prisma.formMateMessage.create.mockResolvedValueOnce({ id: 'msg-user' });
+      prisma.formMateMessage.findMany.mockResolvedValue([]);
+      geminiService.generateReply.mockResolvedValue({
+        replyText: '이렇게 바꿔볼까요?',
+        changes: [
+          { type: 'ADD_QUESTION', summary: 'after 없음', after: null },
+          {
+            type: 'UPDATE_QUESTION',
+            summary: 'type 빠짐',
+            targetStableKey: 'q1',
+            after: { questionText: '고친 질문' },
+          },
+          {
+            type: 'ADD_QUESTION',
+            summary: '빈 질문 문구',
+            after: { type: 'SHORT_ANSWER', questionText: '  ' },
+          },
+          {
+            type: 'DELETE_QUESTION',
+            summary: '1번 문항 삭제',
+            targetStableKey: 'q1',
+          },
+        ],
+      });
+      prisma.formMateMessage.create.mockResolvedValueOnce({
+        id: 'msg-assistant',
+      });
+      prisma.formMateProposedChange.create.mockResolvedValue({
+        id: 'change-delete',
+        type: 'DELETE_QUESTION',
+        summary: '1번 문항 삭제',
+        after: null,
+      });
+
+      const result = await service.sendMessage('user-1', 'survey-1', {
+        message: '고쳐줘',
+      });
+
+      expect(prisma.formMateProposedChange.create).toHaveBeenCalledTimes(1);
+      const createCall = prisma.formMateProposedChange.create.mock.calls[0][0];
+      expect(createCall.data.type).toBe('DELETE_QUESTION');
+      expect(createCall.data.after).toBe(Prisma.JsonNull);
+      expect(result.proposedChanges.map((c) => c.id)).toEqual([
+        'change-delete',
+      ]);
+    });
+
+    // apply는 문항을 통째로 교체하므로, 모델이 바뀐 필드만 보내 options가 빠진
+    // 선택형 문항을 저장하면 기존 보기가 전부 지워진다.
+    it('drops a choice-question change whose after omits options', async () => {
+      surveyService.getAccessibleSurveyOrThrow.mockResolvedValue(
+        buildDraftSurvey(),
+      );
+      prisma.formMateMessage.create.mockResolvedValueOnce({ id: 'msg-user' });
+      prisma.formMateMessage.findMany.mockResolvedValue([]);
+      geminiService.generateReply.mockResolvedValue({
+        replyText: '보기를 추가했어요.',
+        changes: [
+          {
+            type: 'ADD_QUESTION',
+            summary: '선택형 문항 추가',
+            after: {
+              type: 'SINGLE_CHOICE',
+              questionText: '학식을 얼마나 자주 이용하나요?',
+            },
+          },
+        ],
+      });
+      prisma.formMateMessage.create.mockResolvedValueOnce({
+        id: 'msg-assistant',
+      });
+
+      const result = await service.sendMessage('user-1', 'survey-1', {
+        message: '문항 추가해줘',
       });
 
       expect(prisma.formMateProposedChange.create).not.toHaveBeenCalled();
@@ -445,6 +540,33 @@ describe('FormMateService', () => {
       expect(updateCall.data.after?.id).toBe(added?.id);
     });
 
+    // 검증이 생기기 전에 저장된 제안(after가 null인 ADD_QUESTION 등)이 병합
+    // 단계에 들어가면 Prisma create가 터져 500이 됐다 — 트랜잭션 전에 400으로.
+    it('rejects with 400 and never opens the transaction when a stored change has no usable after', async () => {
+      surveyService.getAccessibleSurveyOrThrow.mockResolvedValue(
+        buildDraftSurvey(),
+      );
+      prisma.formMateProposedChange.findMany.mockResolvedValue([
+        {
+          id: 'change-legacy',
+          status: FormMateChangeStatus.PENDING,
+          type: 'ADD_QUESTION',
+          targetStableKey: null,
+          before: null,
+          after: null,
+        },
+      ]);
+
+      await expect(
+        service.applyChanges('user-1', 'survey-1', {
+          changeIds: ['change-legacy'],
+          version: 0,
+        }),
+      ).rejects.toBeInstanceOf(FormMateChangeInvalidException);
+      expect(prisma.survey.updateMany).not.toHaveBeenCalled();
+      expect(surveyService.replaceSurveyQuestions).not.toHaveBeenCalled();
+    });
+
     it('reverting DELETE_QUESTION re-inserts the before snapshot', async () => {
       // q1 was actually removed from the DB when this change was applied, so
       // a fresh fetch of the survey no longer includes it.
@@ -474,11 +596,14 @@ describe('FormMateService', () => {
         revert: true,
       });
 
-      const [, , mergedQuestions] =
+      const [, , mergedQuestions, existingStableKeys] =
         surveyService.replaceSurveyQuestions.mock.calls[0];
       expect(mergedQuestions).toEqual([
         expect.objectContaining({ id: 'q1', questionText: '기존 질문' }),
       ]);
+      // 실서버 QA: q1은 지금 DB에 없는 id라, 알려진 id로 등록해두지 않으면
+      // replaceSurveyQuestions가 "존재하지 않는 문항 id"로 400을 냈다.
+      expect(existingStableKeys.has('q1')).toBe(true);
       expect(prisma.formMateProposedChange.update).toHaveBeenCalledWith({
         where: { id: 'change-3' },
         data: { status: FormMateChangeStatus.REVERTED, appliedAt: null },
