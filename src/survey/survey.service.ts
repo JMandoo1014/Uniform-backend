@@ -24,6 +24,7 @@ import { kstDateStringToUtcEndOfDay } from '../common/utils/kst-date.util';
 import { validateSubmittedAnswers } from '../response/response-answer.validator';
 import { CreateSurveyDraftDto } from './dto/create-survey-draft.dto';
 import { UpdateSurveyDraftDto } from './dto/update-survey-draft.dto';
+import { UpdateSurveyQuestionDto } from './dto/update-survey-question.dto';
 import { ListSurveysQueryDto } from './dto/list-surveys-query.dto';
 import { MoveToTeamDto } from './dto/move-to-team.dto';
 import { CopySurveyDto } from './dto/copy-survey.dto';
@@ -120,65 +121,12 @@ export class SurveyService {
       }
 
       if (dto.questions !== undefined) {
-        for (const question of dto.questions) {
-          if (question.id && !existingStableKeys.has(question.id)) {
-            throw new BadRequestException(
-              `존재하지 않는 문항 id입니다: ${question.id}`,
-            );
-          }
-        }
-
-        await tx.surveyQuestion.deleteMany({ where: { surveyId } });
-
-        const isChoiceType = (type: SurveyQuestionType) =>
-          type === SurveyQuestionType.SINGLE_CHOICE ||
-          type === SurveyQuestionType.MULTI_CHOICE;
-
-        for (const [index, question] of dto.questions.entries()) {
-          await tx.surveyQuestion.create({
-            data: {
-              surveyId,
-              orderNo: index + 1,
-              stableKey: question.id ?? randomUUID(),
-              type: question.type,
-              questionText: question.questionText,
-              required: question.required ?? true,
-              minSelect:
-                question.type === SurveyQuestionType.MULTI_CHOICE
-                  ? (question.minSelect ?? null)
-                  : null,
-              maxSelect:
-                question.type === SurveyQuestionType.MULTI_CHOICE
-                  ? (question.maxSelect ?? null)
-                  : null,
-              minScale:
-                question.type === SurveyQuestionType.SCALE ? SCALE_MIN : null,
-              maxScale:
-                question.type === SurveyQuestionType.SCALE ? SCALE_MAX : null,
-              minScaleLabel:
-                question.type === SurveyQuestionType.SCALE
-                  ? (question.minScaleLabel ?? null)
-                  : null,
-              maxScaleLabel:
-                question.type === SurveyQuestionType.SCALE
-                  ? (question.maxScaleLabel ?? null)
-                  : null,
-              options:
-                isChoiceType(question.type) && question.options
-                  ? {
-                      create: question.options.map((option, optionIndex) => ({
-                        orderNo: optionIndex + 1,
-                        label: option.label,
-                        isEtc:
-                          question.type === SurveyQuestionType.SINGLE_CHOICE
-                            ? (option.isEtc ?? false)
-                            : false,
-                      })),
-                    }
-                  : undefined,
-            },
-          });
-        }
+        await this.replaceSurveyQuestions(
+          tx,
+          surveyId,
+          dto.questions,
+          existingStableKeys,
+        );
       }
 
       return tx.survey.findUniqueOrThrow({
@@ -512,6 +460,86 @@ export class SurveyService {
     }
 
     return survey;
+  }
+
+  // FormMate 연동: updateDraft와 완전히 같은 접근 권한 기준(개인 초안 작성자 /
+  // 팀 초안 현재 팀원)을 다른 서비스(FormMateService)에서도 그대로 쓰기 위한
+  // 공개 진입점. private 헬퍼 이름을 바꾸지 않고 얇게 감싼다.
+  async getAccessibleSurveyOrThrow(
+    userId: string,
+    surveyId: string,
+  ): Promise<SurveyWithQuestions> {
+    return this.findAccessibleSurveyOrThrow(userId, surveyId);
+  }
+
+  // updateDraft가 쓰던 "문항 전체 교체" 로직을 그대로 뽑아낸 것 — FormMate의
+  // apply/revert도 같은 방식(전체 목록을 새로 계산해 통째로 교체)으로 반영한다.
+  // tx를 파라미터로 받으므로 호출자의 트랜잭션 안에서 그대로 실행된다.
+  async replaceSurveyQuestions(
+    tx: Prisma.TransactionClient,
+    surveyId: string,
+    questions: UpdateSurveyQuestionDto[],
+    existingStableKeys: Set<string>,
+  ): Promise<void> {
+    for (const question of questions) {
+      if (question.id && !existingStableKeys.has(question.id)) {
+        throw new BadRequestException(
+          `존재하지 않는 문항 id입니다: ${question.id}`,
+        );
+      }
+    }
+
+    await tx.surveyQuestion.deleteMany({ where: { surveyId } });
+
+    const isChoiceType = (type: SurveyQuestionType) =>
+      type === SurveyQuestionType.SINGLE_CHOICE ||
+      type === SurveyQuestionType.MULTI_CHOICE;
+
+    for (const [index, question] of questions.entries()) {
+      await tx.surveyQuestion.create({
+        data: {
+          surveyId,
+          orderNo: index + 1,
+          stableKey: question.id ?? randomUUID(),
+          type: question.type,
+          questionText: question.questionText,
+          required: question.required ?? true,
+          minSelect:
+            question.type === SurveyQuestionType.MULTI_CHOICE
+              ? (question.minSelect ?? null)
+              : null,
+          maxSelect:
+            question.type === SurveyQuestionType.MULTI_CHOICE
+              ? (question.maxSelect ?? null)
+              : null,
+          minScale:
+            question.type === SurveyQuestionType.SCALE ? SCALE_MIN : null,
+          maxScale:
+            question.type === SurveyQuestionType.SCALE ? SCALE_MAX : null,
+          minScaleLabel:
+            question.type === SurveyQuestionType.SCALE
+              ? (question.minScaleLabel ?? null)
+              : null,
+          maxScaleLabel:
+            question.type === SurveyQuestionType.SCALE
+              ? (question.maxScaleLabel ?? null)
+              : null,
+          options:
+            isChoiceType(question.type) && question.options
+              ? {
+                  create: question.options.map((option, optionIndex) => ({
+                    orderNo: optionIndex + 1,
+                    label: option.label,
+                    isEtc:
+                      question.type === SurveyQuestionType.SINGLE_CHOICE
+                        ? (option.isEtc ?? false)
+                        : false,
+                  })),
+                }
+              : undefined,
+        },
+      });
+    }
   }
 
   // Spec 3.3: 목록·상세에서 USER는 등록자 닉네임, TEAM은 팀 이름으로 표시한다.
