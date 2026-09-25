@@ -2,11 +2,13 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   FormMateChangeStatus,
   FormMateMessageRole,
+  FormMateProposedChange,
   Prisma,
 } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  FormMateChangeInvalidException,
   FormMateChangeNotApplicableException,
   SurveyNotDraftException,
   SurveyVersionConflictException,
@@ -21,6 +23,11 @@ import { SendFormMateMessageDto } from './dto/send-formmate-message.dto';
 import { ApplyFormMateChangesDto } from './dto/apply-formmate-changes.dto';
 import { SendFormMateMessageResponseDto } from './dto/send-formmate-message-response.dto';
 import { FORMMATE_RECENT_MESSAGE_LIMIT } from './formmate.constants';
+import {
+  changeRequiresAfter,
+  isFormMateChangeType,
+  isValidQuestionDraft,
+} from './formmate-change.validator';
 import {
   FormMateChangeType,
   FormMateConversationTurn,
@@ -114,6 +121,19 @@ export class FormMateService {
       }[] = [];
 
       for (const change of result.changes) {
+        if (!isFormMateChangeType(change.type)) {
+          continue;
+        }
+        // 스키마로 after를 필수로 걸어도 모델이 null이나 필수 필드가 빠진
+        // 문항을 줄 수 있다 — 그대로 저장하면 apply 시점에 문항을 만들 수
+        // 없으므로, 적용 불가능한 제안은 아예 저장하지 않는다.
+        if (
+          changeRequiresAfter(change.type) &&
+          !isValidQuestionDraft(change.after)
+        ) {
+          continue;
+        }
+
         // Spec 4.2: before는 AI가 아니라 서버가 현재 DB 상태에서 직접 계산한다.
         const target = change.targetStableKey
           ? survey.questions.find((q) => q.stableKey === change.targetStableKey)
@@ -137,8 +157,10 @@ export class FormMateService {
             summary: change.summary,
             targetStableKey: change.targetStableKey ?? null,
             before,
-            after: (change.after ??
-              Prisma.JsonNull) as unknown as Prisma.InputJsonValue,
+            // DELETE_QUESTION은 after가 없다 — 모델이 뭔가 채워 보내도 버린다.
+            after: changeRequiresAfter(change.type)
+              ? (change.after as unknown as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
           },
         });
         created.push({
@@ -184,6 +206,12 @@ export class FormMateService {
       if (change.status !== expectedStatus) {
         throw new FormMateChangeNotApplicableException();
       }
+      // sendMessage에서 거르기 전에 저장된 제안이나 손상된 스냅샷이 병합 단계에
+      // 들어가면 replaceSurveyQuestions의 Prisma create가 터져 500이 된다 —
+      // 트랜잭션에 들어가기 전에 막아서 400으로 알린다.
+      if (!this.isMergeable(change, revert)) {
+        throw new FormMateChangeInvalidException();
+      }
     }
 
     // Spec 4.1/4.2: updateDraft와 같은 낙관적 락 패턴 — 문항을 바꾸는 작업이므로
@@ -223,6 +251,13 @@ export class FormMateService {
         if (result.assignedId) {
           existingStableKeys.add(result.assignedId);
           assignedIdOverrides.set(change.id, result.assignedId);
+        }
+        // DELETE_QUESTION revert는 지워졌던 문항을 원래 stableKey 그대로 되살린다
+        // — 지금 DB에는 없는 id라서, ADD_QUESTION의 assignedId처럼 알려진 id로
+        // 등록해두지 않으면 replaceSurveyQuestions가 "존재하지 않는 문항 id"로
+        // 거부한다.
+        if (result.restoredId) {
+          existingStableKeys.add(result.restoredId);
         }
       }
 
@@ -272,6 +307,31 @@ export class FormMateService {
     return { newVersion };
   }
 
+  // mergeChangeIntoQuestions에 넘길 값이 실제로 문항을 만들 수 있는 모양인지.
+  // apply는 after, revert는 before(ADD_QUESTION 제외 — 지울 id만 있으면 됨)를 쓴다.
+  private isMergeable(
+    change: FormMateProposedChange,
+    revert: boolean,
+  ): boolean {
+    if (!isFormMateChangeType(change.type)) {
+      return false;
+    }
+    if (change.type === 'ADD_QUESTION') {
+      return revert
+        ? !!change.targetStableKey
+        : isValidQuestionDraft(change.after);
+    }
+    if (!change.targetStableKey) {
+      return false;
+    }
+    if (revert) {
+      return isValidQuestionDraft(change.before);
+    }
+    return (
+      !changeRequiresAfter(change.type) || isValidQuestionDraft(change.after)
+    );
+  }
+
   // Spec 4.2: ADD_QUESTION은 새로 생성될 것이므로 되돌리기가 기존 UPDATE/DELETE와
   // 대칭이 아니다(before가 애초에 없음) — 타입별로 명시적으로 분기한다.
   private mergeChangeIntoQuestions(
@@ -280,7 +340,11 @@ export class FormMateService {
     targetStableKey: string | null,
     content: FormMateQuestionDraft | null,
     revert: boolean,
-  ): { questions: FormMateQuestionDraft[]; assignedId?: string } {
+  ): {
+    questions: FormMateQuestionDraft[];
+    assignedId?: string;
+    restoredId?: string;
+  } {
     if (type === 'ADD_QUESTION') {
       if (!revert) {
         const assignedId = randomUUID();
@@ -303,7 +367,15 @@ export class FormMateService {
           questions: questions.filter((q) => q.id !== targetStableKey),
         };
       }
-      return { questions: [...questions, content as FormMateQuestionDraft] };
+      // before 스냅샷의 id를 믿지 않고 targetStableKey로 못박는다(UPDATE와 동일).
+      const restoredId = targetStableKey!;
+      return {
+        questions: [
+          ...questions,
+          { ...(content as FormMateQuestionDraft), id: restoredId },
+        ],
+        restoredId,
+      };
     }
 
     // UPDATE_QUESTION / UPDATE_OPTION — id는 항상 targetStableKey로 직접

@@ -234,6 +234,18 @@ export class FormMateChangeNotApplicableException extends BusinessException {
   }
 }
 
+// Spec 4.2 FormMate: 저장된 제안의 내용(after/before)이 문항으로 만들 수 없는
+// 모양인 경우 — 검증이 추가되기 전에 저장된 제안 등. 다시 요청해도 같은 제안은
+// 적용되지 않으므로 새 제안을 받도록 안내한다.
+export class FormMateChangeInvalidException extends BusinessException {
+  constructor() {
+    super(
+      '적용할 수 없는 제안입니다. FormMate에게 다시 요청해주세요.',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+}
+
 // Spec 4.2 FormMate: Gemini가 토큰 제한으로 응답을 자르거나 스키마를 어겨서
 // JSON.parse 자체가 실패하는 경우 — 클라이언트 잘못이 아니라 업스트림(AI) 응답
 // 문제이므로 502로 알린다.
