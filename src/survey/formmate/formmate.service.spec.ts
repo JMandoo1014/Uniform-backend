@@ -18,13 +18,6 @@ import { FormMateGeminiService } from './formmate-gemini.service';
 import { FormMateService } from './formmate.service';
 import { FormMateQuestionDraft } from './formmate.types';
 
-// FormMateGeminiService는 아래에서 useValue 목으로 갈아끼우므로 DI 토큰으로만
-// 쓴다. 실제 모듈을 불러오면 ESM 전용인 @nestjs/config를 Jest(CommonJS)가
-// require하다 스위트 전체가 로드 실패한다.
-jest.mock('./formmate-gemini.service', () => ({
-  FormMateGeminiService: class FormMateGeminiService {},
-}));
-
 type ReplaceSurveyQuestionsCall = [
   unknown,
   string,
