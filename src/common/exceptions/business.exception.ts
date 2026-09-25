@@ -225,3 +225,11 @@ export class TeamDraftDeleteForbiddenException extends BusinessException {
     super('팀장 또는 만든 사람만 삭제할 수 있습니다.', HttpStatus.FORBIDDEN);
   }
 }
+
+// Spec 4.2 FormMate: 적용(apply)은 PENDING 상태의 제안만, 되돌리기(revert)는
+// APPLIED 상태의 제안만 대상으로 할 수 있다.
+export class FormMateChangeNotApplicableException extends BusinessException {
+  constructor() {
+    super('적용할 수 없는 상태의 제안입니다.', HttpStatus.CONFLICT);
+  }
+}
