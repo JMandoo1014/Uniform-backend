@@ -6,20 +6,28 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/types/jwt-payload.type';
 import { ResponseService } from './response.service';
 import { SaveAnswersDto } from './dto/save-answers.dto';
 import { SubmitResponseDto } from './dto/submit-response.dto';
+import { SessionResponseDto } from './dto/session-response.dto';
+import { SubmitResultDto } from './dto/submit-result.dto';
 
+@ApiTags('Response')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('surveys/:surveyId/sessions')
 export class ResponseController {
   constructor(private readonly responseService: ResponseService) {}
 
   @Post()
-  start(@CurrentUser() user: JwtPayload, @Param('surveyId') surveyId: string) {
+  start(
+    @CurrentUser() user: JwtPayload,
+    @Param('surveyId') surveyId: string,
+  ): Promise<SessionResponseDto> {
     return this.responseService.startOrResumeSession(user.sub, surveyId);
   }
 
@@ -29,7 +37,7 @@ export class ResponseController {
     @Param('surveyId') surveyId: string,
     @Param('sessionId') sessionId: string,
     @Body() dto: SaveAnswersDto,
-  ) {
+  ): Promise<{ success: true }> {
     return this.responseService.saveAnswers(user.sub, surveyId, sessionId, dto);
   }
 
@@ -39,7 +47,7 @@ export class ResponseController {
     @Param('surveyId') surveyId: string,
     @Param('sessionId') sessionId: string,
     @Body() dto: SubmitResponseDto,
-  ) {
+  ): Promise<SubmitResultDto> {
     return this.responseService.submit(user.sub, surveyId, sessionId, dto);
   }
 }

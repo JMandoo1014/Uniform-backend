@@ -9,6 +9,7 @@ import {
   Patch,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/types/jwt-payload.type';
@@ -18,13 +19,15 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateMarketingOptInDto } from './dto/update-marketing-opt-in.dto';
 
+@ApiTags('User')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('users')
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
   @Get('me')
-  async getMe(@CurrentUser() jwtUser: JwtPayload) {
+  async getMe(@CurrentUser() jwtUser: JwtPayload): Promise<UserResponseDto> {
     const user = await this.userService.findById(jwtUser.sub);
     if (!user) {
       throw new NotFoundException('사용자를 찾을 수 없습니다.');
@@ -36,7 +39,7 @@ export class UserController {
   async updateProfile(
     @CurrentUser() jwtUser: JwtPayload,
     @Body() dto: UpdateProfileDto,
-  ) {
+  ): Promise<UserResponseDto> {
     const user = await this.userService.updateProfile(jwtUser.sub, dto);
     return new UserResponseDto(user);
   }
@@ -46,7 +49,7 @@ export class UserController {
   async changePassword(
     @CurrentUser() jwtUser: JwtPayload,
     @Body() dto: ChangePasswordDto,
-  ) {
+  ): Promise<void> {
     await this.userService.changePassword(
       jwtUser.sub,
       dto.currentPassword,
@@ -58,7 +61,7 @@ export class UserController {
   async updateMarketingOptIn(
     @CurrentUser() jwtUser: JwtPayload,
     @Body() dto: UpdateMarketingOptInDto,
-  ) {
+  ): Promise<UserResponseDto> {
     const user = await this.userService.updateMarketingOptIn(
       jwtUser.sub,
       dto.marketingOptIn,
@@ -68,7 +71,7 @@ export class UserController {
 
   @HttpCode(HttpStatus.NO_CONTENT)
   @Delete('me')
-  async withdraw(@CurrentUser() jwtUser: JwtPayload) {
+  async withdraw(@CurrentUser() jwtUser: JwtPayload): Promise<void> {
     await this.userService.withdraw(jwtUser.sub);
   }
 }
