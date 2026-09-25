@@ -26,7 +26,7 @@ export type FormMateChangeType =
 export interface FormMateProposedChangeDraft {
   type: FormMateChangeType;
   summary: string;
-  targetQuestionId?: string;
+  targetStableKey?: string;
   // DELETE_QUESTION은 after가 없다(대상을 지우는 동작이라 "될 내용"이 없음).
   after: FormMateQuestionDraft | null;
 }

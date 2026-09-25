@@ -9,9 +9,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   FormMateChangeNotApplicableException,
   SurveyNotDraftException,
+  SurveyVersionConflictException,
 } from '../../common/exceptions/business.exception';
 import { SurveyService } from '../survey.service';
-import { SurveyWithQuestions } from '../dto/survey-response.dto';
+import {
+  SurveyResponseDto,
+  SurveyWithQuestions,
+} from '../dto/survey-response.dto';
 import { FormMateGeminiService } from './formmate-gemini.service';
 import { SendFormMateMessageDto } from './dto/send-formmate-message.dto';
 import { ApplyFormMateChangesDto } from './dto/apply-formmate-changes.dto';
@@ -111,14 +115,12 @@ export class FormMateService {
 
       for (const change of result.changes) {
         // Spec 4.2: before는 AI가 아니라 서버가 현재 DB 상태에서 직접 계산한다.
-        const target = change.targetQuestionId
-          ? survey.questions.find(
-              (q) => q.stableKey === change.targetQuestionId,
-            )
+        const target = change.targetStableKey
+          ? survey.questions.find((q) => q.stableKey === change.targetStableKey)
           : undefined;
 
         if (change.type !== 'ADD_QUESTION' && !target) {
-          // Gemini가 존재하지 않는 targetQuestionId를 지어낸 경우 — 적용
+          // Gemini가 존재하지 않는 targetStableKey를 지어낸 경우 — 적용
           // 불가능한 제안이므로 아예 저장하지 않는다.
           continue;
         }
@@ -133,7 +135,7 @@ export class FormMateService {
             surveyId,
             type: change.type,
             summary: change.summary,
-            targetQuestionId: change.targetQuestionId ?? null,
+            targetStableKey: change.targetStableKey ?? null,
             before,
             after: (change.after ??
               Prisma.JsonNull) as unknown as Prisma.InputJsonValue,
@@ -184,14 +186,26 @@ export class FormMateService {
       }
     }
 
+    // Spec 4.1/4.2: updateDraft와 같은 낙관적 락 패턴 — 문항을 바꾸는 작업이므로
+    // 다른 팀원의 apply나 PATCH updateDraft와 동시에 겹치면 lost update가 될 수
+    // 있다. 버전이 맞을 때만 증가시키는 조건부 update를 트랜잭션의 첫 문장으로
+    // 두고, 나머지 변경(문항 교체·change 상태 갱신)은 그게 성공했을 때만 진행한다.
     const newVersion = await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.survey.updateMany({
+        where: { id: surveyId, version: dto.version },
+        data: { version: { increment: 1 } },
+      });
+      if (count === 0) {
+        return null;
+      }
+
       let questions = [...survey.questions]
         .sort((a, b) => a.orderNo - b.orderNo)
         .map(toQuestionDraft);
       const existingStableKeys = new Set(questions.map((q) => q.id!));
 
       // ADD_QUESTION을 적용할 때 새로 배정한 stableKey — 나중에 그 change를
-      // revert할 때 "어떤 문항을 지울지" 알아야 하므로 targetQuestionId 컬럼에
+      // revert할 때 "어떤 문항을 지울지" 알아야 하므로 targetStableKey 컬럼에
       // 함께 기록해둔다(원래는 ADD_QUESTION 제안 시점엔 target이 없었다).
       const assignedIdOverrides = new Map<string, string>();
 
@@ -199,7 +213,7 @@ export class FormMateService {
         const result = this.mergeChangeIntoQuestions(
           questions,
           change.type as FormMateChangeType,
-          change.targetQuestionId,
+          change.targetStableKey,
           revert
             ? (change.before as unknown as FormMateQuestionDraft | null)
             : (change.after as unknown as FormMateQuestionDraft | null),
@@ -230,7 +244,7 @@ export class FormMateService {
             appliedAt: revert ? null : new Date(),
             ...(assignedId
               ? {
-                  targetQuestionId: assignedId,
+                  targetStableKey: assignedId,
                   after: {
                     ...(change.after as object),
                     id: assignedId,
@@ -241,12 +255,19 @@ export class FormMateService {
         });
       }
 
-      const updated = await tx.survey.update({
+      const updated = await tx.survey.findUniqueOrThrow({
         where: { id: surveyId },
-        data: { version: { increment: 1 } },
       });
       return updated.version;
     });
+
+    if (newVersion === null) {
+      const latest = await this.surveyService.getAccessibleSurveyOrThrow(
+        userId,
+        surveyId,
+      );
+      throw new SurveyVersionConflictException(new SurveyResponseDto(latest));
+    }
 
     return { newVersion };
   }
@@ -256,7 +277,7 @@ export class FormMateService {
   private mergeChangeIntoQuestions(
     questions: FormMateQuestionDraft[],
     type: FormMateChangeType,
-    targetQuestionId: string | null,
+    targetStableKey: string | null,
     content: FormMateQuestionDraft | null,
     revert: boolean,
   ): { questions: FormMateQuestionDraft[]; assignedId?: string } {
@@ -270,29 +291,29 @@ export class FormMateService {
         return { questions: [...questions, newQuestion], assignedId };
       }
       // revert: apply 시점에 채워둔 id(override)로 지운다 — 호출자가
-      // targetQuestionId 자리에 그 값을 넣어서 넘겨준다(applyChanges 참고).
+      // targetStableKey 자리에 그 값을 넣어서 넘겨준다(applyChanges 참고).
       return {
-        questions: questions.filter((q) => q.id !== targetQuestionId),
+        questions: questions.filter((q) => q.id !== targetStableKey),
       };
     }
 
     if (type === 'DELETE_QUESTION') {
       if (!revert) {
         return {
-          questions: questions.filter((q) => q.id !== targetQuestionId),
+          questions: questions.filter((q) => q.id !== targetStableKey),
         };
       }
       return { questions: [...questions, content as FormMateQuestionDraft] };
     }
 
-    // UPDATE_QUESTION / UPDATE_OPTION — id는 항상 targetQuestionId로 직접
+    // UPDATE_QUESTION / UPDATE_OPTION — id는 항상 targetStableKey로 직접
     // 못박는다. content가 apply 경로에서는 Gemini가 준 after 그대로라 id
     // 필드를 믿을 수 없다(비어 있거나 다른 값일 수 있음) — 그대로 두면
     // stableKey가 바뀌어 별개 문항으로 취급될 위험이 있다.
     return {
       questions: questions.map((q) =>
-        q.id === targetQuestionId
-          ? { ...(content as FormMateQuestionDraft), id: targetQuestionId }
+        q.id === targetStableKey
+          ? { ...(content as FormMateQuestionDraft), id: targetStableKey }
           : q,
       ),
     };
@@ -308,7 +329,7 @@ export class FormMateService {
       '사용자가 설문 문항을 만들거나 고치는 것을 대화로 돕습니다.',
       '문항을 추가/수정/삭제하고 싶다는 요청이면 changes 배열에 제안을 담아 응답하고,',
       '단순 질문이나 설명 요청이면 changes를 빈 배열로 둔 채 replyText로만 답하세요.',
-      'targetQuestionId는 아래 "현재 문항 목록"에 있는 id 값만 사용하세요 — 지어내지 마세요.',
+      'targetStableKey는 아래 "현재 문항 목록"에 있는 id 값만 사용하세요 — 지어내지 마세요.',
       '',
       '현재 문항 목록(JSON):',
       JSON.stringify(currentQuestions),

@@ -312,21 +312,21 @@ model FormMateMessage {
 // before는 AI가 아니라 서버가 생성 시점에 현재 DB 상태에서 직접 계산해 저장한다
 // (되돌리기의 신뢰성 확보 — AI가 지어낸 "이전 상태"를 믿지 않는다).
 model FormMateProposedChange {
-  id               String               @id @default(uuid())
-  messageId        String
-  surveyId         String
+  id              String               @id @default(uuid())
+  messageId       String
+  surveyId        String
   // "ADD_QUESTION" | "UPDATE_QUESTION" | "DELETE_QUESTION" | "UPDATE_OPTION"
-  type             String
-  summary          String
+  type            String
+  summary         String
   // ADD_QUESTION 이외 타입은 대상 문항의 stableKey. apply/revert 시 before/after
   // JSON 안이 아니라 여기서 바로 읽는다(ADD_QUESTION 되돌리기처럼 대상 id가
   // before/after 어느 한쪽에도 없을 수 있어서 별도 컬럼으로 둔다).
-  targetQuestionId String?
-  before           Json?
-  after            Json?
-  status           FormMateChangeStatus @default(PENDING)
-  createdAt        DateTime             @default(now())
-  appliedAt        DateTime?
+  targetStableKey String?
+  before          Json?
+  after           Json?
+  status          FormMateChangeStatus @default(PENDING)
+  createdAt       DateTime             @default(now())
+  appliedAt       DateTime?
 
   message FormMateMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
   survey  Survey          @relation(fields: [surveyId], references: [id], onDelete: Cascade)

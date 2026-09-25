@@ -9,6 +9,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   FormMateChangeNotApplicableException,
   SurveyNotDraftException,
+  SurveyVersionConflictException,
 } from '../../common/exceptions/business.exception';
 import { SurveyService } from '../survey.service';
 import { FormMateGeminiService } from './formmate-gemini.service';
@@ -28,7 +29,7 @@ interface ProposedChangeCreateArgs {
     surveyId: string;
     type: string;
     summary: string;
-    targetQuestionId: string | null;
+    targetStableKey: string | null;
     before: unknown;
     after: unknown;
   };
@@ -46,7 +47,7 @@ interface ProposedChangeUpdateArgs {
   data: {
     status: FormMateChangeStatus;
     appliedAt: Date | null;
-    targetQuestionId?: string;
+    targetStableKey?: string;
     after?: { id: string };
   };
 }
@@ -100,7 +101,10 @@ describe('FormMateService', () => {
       findMany: jest.Mock;
       update: jest.Mock<Promise<unknown>, [ProposedChangeUpdateArgs]>;
     };
-    survey: { update: jest.Mock };
+    survey: {
+      updateMany: jest.Mock<Promise<{ count: number }>, [unknown]>;
+      findUniqueOrThrow: jest.Mock<Promise<{ version: number }>, [unknown]>;
+    };
     $transaction: jest.Mock;
   };
   let surveyService: {
@@ -126,7 +130,10 @@ describe('FormMateService', () => {
         findMany: jest.fn(),
         update: jest.fn<Promise<unknown>, [ProposedChangeUpdateArgs]>(),
       },
-      survey: { update: jest.fn() },
+      survey: {
+        updateMany: jest.fn<Promise<{ count: number }>, [unknown]>(),
+        findUniqueOrThrow: jest.fn<Promise<{ version: number }>, [unknown]>(),
+      },
       // Runs the transaction callback against a tx stub built from the same
       // mocks — good enough for these unit tests since none of them assert
       // on transactional isolation, only on what gets called with what.
@@ -138,6 +145,9 @@ describe('FormMateService', () => {
         }),
       ),
     };
+    // apply의 낙관적 락 검사가 기본적으로 통과하도록(대부분 테스트는 버전
+    // 충돌 자체를 검증하는 게 아니므로) 기본값을 성공으로 둔다.
+    prisma.survey.updateMany.mockResolvedValue({ count: 1 });
     surveyService = {
       getAccessibleSurveyOrThrow: jest.fn(),
       replaceSurveyQuestions: jest.fn<
@@ -184,7 +194,7 @@ describe('FormMateService', () => {
           {
             type: 'UPDATE_QUESTION',
             summary: '질문 문구 수정',
-            targetQuestionId: 'q1',
+            targetStableKey: 'q1',
             after: {
               id: 'q1',
               type: 'SHORT_ANSWER',
@@ -225,7 +235,7 @@ describe('FormMateService', () => {
         id: 'q1',
         questionText: '기존 질문',
       });
-      expect(createCall.data.targetQuestionId).toBe('q1');
+      expect(createCall.data.targetStableKey).toBe('q1');
 
       expect(result.aiReply).toBe('문항을 하나 고쳤어요.');
       expect(result.proposedChanges).toEqual([
@@ -238,7 +248,7 @@ describe('FormMateService', () => {
       ]);
     });
 
-    it('drops a proposed change whose targetQuestionId does not exist on the survey', async () => {
+    it('drops a proposed change whose targetStableKey does not exist on the survey', async () => {
       surveyService.getAccessibleSurveyOrThrow.mockResolvedValue(
         buildDraftSurvey(),
       );
@@ -250,7 +260,7 @@ describe('FormMateService', () => {
           {
             type: 'UPDATE_QUESTION',
             summary: '존재하지 않는 문항 수정 시도',
-            targetQuestionId: 'no-such-question',
+            targetStableKey: 'no-such-question',
             after: { questionText: 'x' },
           },
         ],
@@ -280,6 +290,7 @@ describe('FormMateService', () => {
       await expect(
         service.applyChanges('user-1', 'survey-1', {
           changeIds: ['change-1'],
+          version: 0,
         }),
       ).rejects.toBeInstanceOf(FormMateChangeNotApplicableException);
       expect(surveyService.replaceSurveyQuestions).not.toHaveBeenCalled();
@@ -296,6 +307,7 @@ describe('FormMateService', () => {
       await expect(
         service.applyChanges('user-1', 'survey-1', {
           changeIds: ['change-1'],
+          version: 0,
           revert: true,
         }),
       ).rejects.toBeInstanceOf(FormMateChangeNotApplicableException);
@@ -310,8 +322,53 @@ describe('FormMateService', () => {
       await expect(
         service.applyChanges('user-1', 'survey-1', {
           changeIds: ['missing-change'],
+          version: 0,
         }),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    // Spec 4.1/4.2: apply도 updateDraft와 같은 낙관적 락을 쓴다 — 팀원 두 명이
+    // 거의 동시에 apply를 누르거나 apply와 PATCH updateDraft가 겹치면 한쪽이
+    // 조용히 덮어써지는(lost update) 걸 막기 위함.
+    it('throws a version conflict and never touches questions when the version is stale', async () => {
+      surveyService.getAccessibleSurveyOrThrow
+        .mockResolvedValueOnce(buildDraftSurvey())
+        .mockResolvedValueOnce({
+          ...buildDraftSurvey(),
+          title: '설문',
+          description: null,
+          targetCount: null,
+          deadlineAt: null,
+          version: 1,
+          publishedAt: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+      prisma.formMateProposedChange.findMany.mockResolvedValue([
+        {
+          id: 'change-1',
+          status: FormMateChangeStatus.PENDING,
+          type: 'UPDATE_QUESTION',
+          targetStableKey: 'q1',
+          before: { id: 'q1', questionText: '기존 질문' },
+          after: { id: 'q1', type: 'SHORT_ANSWER', questionText: '고친 질문' },
+        },
+      ]);
+      prisma.survey.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.applyChanges('user-1', 'survey-1', {
+          changeIds: ['change-1'],
+          version: 0,
+        }),
+      ).rejects.toBeInstanceOf(SurveyVersionConflictException);
+
+      expect(prisma.survey.updateMany).toHaveBeenCalledWith({
+        where: { id: 'survey-1', version: 0 },
+        data: { version: { increment: 1 } },
+      });
+      expect(surveyService.replaceSurveyQuestions).not.toHaveBeenCalled();
+      expect(prisma.formMateProposedChange.update).not.toHaveBeenCalled();
     });
 
     it('applies an UPDATE_QUESTION change, replaces questions with the merged list, and bumps version', async () => {
@@ -323,17 +380,22 @@ describe('FormMateService', () => {
           id: 'change-1',
           status: FormMateChangeStatus.PENDING,
           type: 'UPDATE_QUESTION',
-          targetQuestionId: 'q1',
+          targetStableKey: 'q1',
           before: { id: 'q1', questionText: '기존 질문' },
           after: { id: 'q1', type: 'SHORT_ANSWER', questionText: '고친 질문' },
         },
       ]);
-      prisma.survey.update.mockResolvedValue({ version: 3 });
+      prisma.survey.findUniqueOrThrow.mockResolvedValue({ version: 3 });
 
       const result = await service.applyChanges('user-1', 'survey-1', {
         changeIds: ['change-1'],
+        version: 2,
       });
 
+      expect(prisma.survey.updateMany).toHaveBeenCalledWith({
+        where: { id: 'survey-1', version: 2 },
+        data: { version: { increment: 1 } },
+      });
       expect(surveyService.replaceSurveyQuestions).toHaveBeenCalledTimes(1);
       const [, , mergedQuestions] =
         surveyService.replaceSurveyQuestions.mock.calls[0];
@@ -346,10 +408,6 @@ describe('FormMateService', () => {
       expect(applyUpdateCall.where).toEqual({ id: 'change-1' });
       expect(applyUpdateCall.data.status).toBe(FormMateChangeStatus.APPLIED);
       expect(applyUpdateCall.data.appliedAt).toBeInstanceOf(Date);
-      expect(prisma.survey.update).toHaveBeenCalledWith({
-        where: { id: 'survey-1' },
-        data: { version: { increment: 1 } },
-      });
       expect(result).toEqual({ newVersion: 3 });
     });
 
@@ -362,15 +420,16 @@ describe('FormMateService', () => {
           id: 'change-2',
           status: FormMateChangeStatus.PENDING,
           type: 'ADD_QUESTION',
-          targetQuestionId: null,
+          targetStableKey: null,
           before: null,
           after: { type: 'SHORT_ANSWER', questionText: '새 질문' },
         },
       ]);
-      prisma.survey.update.mockResolvedValue({ version: 1 });
+      prisma.survey.findUniqueOrThrow.mockResolvedValue({ version: 1 });
 
       await service.applyChanges('user-1', 'survey-1', {
         changeIds: ['change-2'],
+        version: 0,
       });
 
       const [, , mergedQuestions] =
@@ -380,9 +439,9 @@ describe('FormMateService', () => {
       expect(added?.id).toEqual(expect.any(String));
 
       const updateCall = prisma.formMateProposedChange.update.mock.calls[0][0];
-      // apply 시점에 배정한 id가 targetQuestionId/after 양쪽에 기록돼야
+      // apply 시점에 배정한 id가 targetStableKey/after 양쪽에 기록돼야
       // 나중에 revert할 때 "어떤 문항을 지울지" 알 수 있다.
-      expect(updateCall.data.targetQuestionId).toBe(added?.id);
+      expect(updateCall.data.targetStableKey).toBe(added?.id);
       expect(updateCall.data.after?.id).toBe(added?.id);
     });
 
@@ -398,7 +457,7 @@ describe('FormMateService', () => {
           id: 'change-3',
           status: FormMateChangeStatus.APPLIED,
           type: 'DELETE_QUESTION',
-          targetQuestionId: 'q1',
+          targetStableKey: 'q1',
           before: {
             id: 'q1',
             type: 'SHORT_ANSWER',
@@ -407,10 +466,11 @@ describe('FormMateService', () => {
           after: null,
         },
       ]);
-      prisma.survey.update.mockResolvedValue({ version: 5 });
+      prisma.survey.findUniqueOrThrow.mockResolvedValue({ version: 5 });
 
       await service.applyChanges('user-1', 'survey-1', {
         changeIds: ['change-3'],
+        version: 4,
         revert: true,
       });
 
