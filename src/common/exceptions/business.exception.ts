@@ -225,3 +225,23 @@ export class TeamDraftDeleteForbiddenException extends BusinessException {
     super('팀장 또는 만든 사람만 삭제할 수 있습니다.', HttpStatus.FORBIDDEN);
   }
 }
+
+// Spec 4.2 FormMate: 적용(apply)은 PENDING 상태의 제안만, 되돌리기(revert)는
+// APPLIED 상태의 제안만 대상으로 할 수 있다.
+export class FormMateChangeNotApplicableException extends BusinessException {
+  constructor() {
+    super('적용할 수 없는 상태의 제안입니다.', HttpStatus.CONFLICT);
+  }
+}
+
+// Spec 4.2 FormMate: Gemini가 토큰 제한으로 응답을 자르거나 스키마를 어겨서
+// JSON.parse 자체가 실패하는 경우 — 클라이언트 잘못이 아니라 업스트림(AI) 응답
+// 문제이므로 502로 알린다.
+export class FormMateGenerationFailedException extends BusinessException {
+  constructor() {
+    super(
+      'FormMate 응답을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.',
+      HttpStatus.BAD_GATEWAY,
+    );
+  }
+}

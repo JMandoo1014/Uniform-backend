@@ -25,13 +25,20 @@ import { PreviewResponseDto } from './dto/preview-response.dto';
 import { SurveyResponseDto } from './dto/survey-response.dto';
 import { SurveyListItemResponseDto } from './dto/survey-list-item-response.dto';
 import { SurveyDetailResponseDto } from './dto/survey-detail-response.dto';
+import { FormMateService } from './formmate/formmate.service';
+import { SendFormMateMessageDto } from './formmate/dto/send-formmate-message.dto';
+import { ApplyFormMateChangesDto } from './formmate/dto/apply-formmate-changes.dto';
+import { SendFormMateMessageResponseDto } from './formmate/dto/send-formmate-message-response.dto';
 
 @ApiTags('Survey')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('surveys')
 export class SurveyController {
-  constructor(private readonly surveyService: SurveyService) {}
+  constructor(
+    private readonly surveyService: SurveyService,
+    private readonly formMateService: FormMateService,
+  ) {}
 
   @Post('drafts')
   createDraft(
@@ -123,5 +130,25 @@ export class SurveyController {
     @Param('id') id: string,
   ): Promise<SurveyDetailResponseDto> {
     return this.surveyService.getDetail(user.sub, id);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('drafts/:id/formmate/message')
+  sendFormMateMessage(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: SendFormMateMessageDto,
+  ): Promise<SendFormMateMessageResponseDto> {
+    return this.formMateService.sendMessage(user.sub, id, dto);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('drafts/:id/formmate/apply')
+  applyFormMateChanges(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: ApplyFormMateChangesDto,
+  ): Promise<{ newVersion: number }> {
+    return this.formMateService.applyChanges(user.sub, id, dto);
   }
 }
