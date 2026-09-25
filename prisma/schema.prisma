@@ -69,6 +69,18 @@ enum SurveyQuestionType {
   ETC
 }
 
+enum FormMateMessageRole {
+  USER
+  ASSISTANT
+}
+
+enum FormMateChangeStatus {
+  PENDING
+  APPLIED
+  REVERTED
+  REJECTED
+}
+
 enum ResponseSessionStatus {
   IN_PROGRESS
   SUBMITTED
@@ -234,8 +246,10 @@ model Survey {
   // surveys back-fill this to ownerId (the two are the same person there).
   creatorId String
 
-  questions        SurveyQuestion[]
-  responseSessions ResponseSession[]
+  questions               SurveyQuestion[]
+  responseSessions        ResponseSession[]
+  formMateMessages        FormMateMessage[]
+  formMateProposedChanges FormMateProposedChange[]
 
   @@index([ownerType, ownerId])
   @@map("surveys")
@@ -275,6 +289,49 @@ model SurveyOption {
 
   @@unique([questionId, orderNo])
   @@map("survey_options")
+}
+
+// Spec 4.2: FormMate와 나눈 대화. 팀 초안은 팀원 전체가 같은 기록을 봐야 하므로
+// 세션/메모리가 아니라 DB에 영구 저장한다.
+model FormMateMessage {
+  id        String              @id @default(uuid())
+  surveyId  String
+  userId    String
+  role      FormMateMessageRole
+  content   String
+  createdAt DateTime            @default(now())
+
+  survey  Survey                   @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  changes FormMateProposedChange[]
+
+  @@index([surveyId, createdAt])
+  @@map("formmate_messages")
+}
+
+// Spec 4.2: AI가 제안한 변경 하나. 사용자가 changeIds로 고른 것만 반영된다.
+// before는 AI가 아니라 서버가 생성 시점에 현재 DB 상태에서 직접 계산해 저장한다
+// (되돌리기의 신뢰성 확보 — AI가 지어낸 "이전 상태"를 믿지 않는다).
+model FormMateProposedChange {
+  id               String               @id @default(uuid())
+  messageId        String
+  surveyId         String
+  // "ADD_QUESTION" | "UPDATE_QUESTION" | "DELETE_QUESTION" | "UPDATE_OPTION"
+  type             String
+  summary          String
+  // ADD_QUESTION 이외 타입은 대상 문항의 stableKey. apply/revert 시 before/after
+  // JSON 안이 아니라 여기서 바로 읽는다(ADD_QUESTION 되돌리기처럼 대상 id가
+  // before/after 어느 한쪽에도 없을 수 있어서 별도 컬럼으로 둔다).
+  targetQuestionId String?
+  before           Json?
+  after            Json?
+  status           FormMateChangeStatus @default(PENDING)
+  createdAt        DateTime             @default(now())
+  appliedAt        DateTime?
+
+  message FormMateMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  survey  Survey          @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+
+  @@map("formmate_proposed_changes")
 }
 
 // ============================================================
