@@ -6,11 +6,15 @@ import {
   StreamableFile,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/types/jwt-payload.type';
 import { ResultService } from './result.service';
+import { SurveyResultResponseDto } from './dto/survey-result-response.dto';
 
+@ApiTags('Result')
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('surveys/:surveyId/result')
 export class ResultController {
@@ -20,7 +24,7 @@ export class ResultController {
   getResult(
     @CurrentUser() user: JwtPayload,
     @Param('surveyId') surveyId: string,
-  ) {
+  ): Promise<SurveyResultResponseDto> {
     return this.resultService.getResult(user.sub, surveyId);
   }
 
