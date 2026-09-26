@@ -1,5 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, UserStatus } from '@prisma/client';
+import {
+  Prisma,
+  SurveyOwnerType,
+  SurveyStatus,
+  UserStatus,
+} from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -192,7 +197,13 @@ export class TeamService {
     return new TeamDetailResponseDto(updated, userId);
   }
 
-  // Spec 3.4: 해산은 팀장만. 팀 초안 이동/팀 설문 유지 로직은 Survey-Team 연동 시 채운다.
+  // Spec 3.4 해산: 팀장만 할 수 있다. 팀 초안(DRAFT)은 해산 당시 팀장의 개인
+  // 초안으로 옮긴다. 모집 중인(RECRUITING) 팀 설문은 team row 자체(및
+  // leaderId)를 지우지 않고 disbandedAt만 세워 그대로 두는 것으로 "마감
+  // 시각까지 유지 + 관리 권한·결과 조회는 해산 당시 팀장에게 남는다"를
+  // 만족시킨다 — canManage 계산이 팀 활성 여부를 보지 않고 leaderId만 보기
+  // 때문에 별도 이관 없이도 자동으로 성립한다. CLOSED/ARCHIVED/REMOVED 팀
+  // 설문도 같은 이유로 그대로 둔다.
   async disbandTeam(userId: string, teamId: string): Promise<void> {
     const team = await this.findActiveTeamOrThrow(teamId);
     this.assertIsLeader(team, userId);
@@ -203,11 +214,19 @@ export class TeamService {
         data: { disbandedAt: new Date() },
       }),
       this.prisma.teamMember.deleteMany({ where: { teamId } }),
+      this.prisma.survey.updateMany({
+        where: {
+          ownerType: SurveyOwnerType.TEAM,
+          ownerId: teamId,
+          status: SurveyStatus.DRAFT,
+        },
+        data: {
+          ownerType: SurveyOwnerType.USER,
+          ownerId: team.leaderId,
+          version: { increment: 1 },
+        },
+      }),
     ]);
-
-    // TODO(spec 3.4): 팀 초안을 해산 당시 팀장(leaderId)의 개인 초안으로 옮기고,
-    // 모집 중인 팀 설문은 마감 시각까지 유지하되 관리 권한·결과 조회는 해산 당시
-    // 팀장에게 남겨야 한다. Survey-Team 연동 단계에서 채운다.
   }
 
   private async assertActiveUser(userId: string): Promise<void> {
