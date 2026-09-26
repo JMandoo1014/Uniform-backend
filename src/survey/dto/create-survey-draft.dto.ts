@@ -1,5 +1,6 @@
 import {
   IsIn,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -25,4 +26,14 @@ export class CreateSurveyDraftDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  // 카테고리 후보군이 명세에 없어 자유 문자열로 받는다. 예상 소요 시간은
+  // 작성자가 직접 입력하는 값(분 단위) — 둘 다 선택 입력.
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @IsOptional()
+  @IsInt()
+  estimatedMinutes?: number;
 }

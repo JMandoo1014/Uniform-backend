@@ -25,7 +25,10 @@ import { validateSubmittedAnswers } from '../response/response-answer.validator'
 import { CreateSurveyDraftDto } from './dto/create-survey-draft.dto';
 import { UpdateSurveyDraftDto } from './dto/update-survey-draft.dto';
 import { UpdateSurveyQuestionDto } from './dto/update-survey-question.dto';
-import { ListSurveysQueryDto } from './dto/list-surveys-query.dto';
+import {
+  EstimatedDurationFilter,
+  ListSurveysQueryDto,
+} from './dto/list-surveys-query.dto';
 import { MoveToTeamDto } from './dto/move-to-team.dto';
 import { CopySurveyDto } from './dto/copy-survey.dto';
 import { PreviewResponseDto } from './dto/preview-response.dto';
@@ -72,6 +75,8 @@ export class SurveyService {
         creatorId: userId,
         title: dto.title,
         description: dto.description,
+        category: dto.category,
+        estimatedMinutes: dto.estimatedMinutes,
         status: SurveyStatus.DRAFT,
       },
       include: SURVEY_WITH_QUESTIONS_INCLUDE,
@@ -103,6 +108,9 @@ export class SurveyService {
     const data: Prisma.SurveyUpdateInput = { version: { increment: 1 } };
     if (dto.title !== undefined) data.title = dto.title;
     if (dto.description !== undefined) data.description = dto.description;
+    if (dto.category !== undefined) data.category = dto.category;
+    if (dto.estimatedMinutes !== undefined)
+      data.estimatedMinutes = dto.estimatedMinutes;
     if (dto.targetCount !== undefined) data.targetCount = dto.targetCount;
     if (dto.deadlineDate !== undefined) {
       data.deadlineAt =
@@ -253,6 +261,15 @@ export class SurveyService {
     const where: Prisma.SurveyWhereInput = {
       status: SurveyStatus.RECRUITING,
     };
+
+    if (query.category) {
+      where.category = query.category;
+    }
+    if (query.estimatedDuration) {
+      where.estimatedMinutes = this.buildEstimatedMinutesFilter(
+        query.estimatedDuration,
+      );
+    }
 
     if (query.cursor) {
       const cursor = decodeSurveyCursor(query.cursor);
@@ -610,6 +627,21 @@ export class SurveyService {
         teams.map((team) => [team.id, team.leaderId]),
       ),
     };
+  }
+
+  // Spec 5.2: "3분 이내/5분 이내/6분 이상" 버킷. estimatedMinutes가 null인
+  // 설문은 lte/gte 비교가 SQL에서 자연히 false가 되어 어떤 구간에도 안 잡힌다.
+  private buildEstimatedMinutesFilter(
+    filter: EstimatedDurationFilter,
+  ): Prisma.IntFilter {
+    switch (filter) {
+      case EstimatedDurationFilter.UNDER_3:
+        return { lte: 3 };
+      case EstimatedDurationFilter.UNDER_5:
+        return { lte: 5 };
+      case EstimatedDurationFilter.OVER_6:
+        return { gte: 6 };
+    }
   }
 
   private computeCanManage(

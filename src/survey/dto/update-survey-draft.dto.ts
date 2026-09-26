@@ -28,6 +28,14 @@ export class UpdateSurveyDraftDto {
   @IsInt()
   targetCount?: number | null;
 
+  @IsOptional()
+  @IsString()
+  category?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  estimatedMinutes?: number | null;
+
   // "YYYY-MM-DD" 형식의 캘린더 날짜. 실제 마감 시각(그날 23:59:59 KST)으로 변환해
   // 저장한다. 형식/실제 날짜 유효성은 검사하되, "오늘 이후"인지는 게시 시점에만 검사한다.
   @IsOptional()
