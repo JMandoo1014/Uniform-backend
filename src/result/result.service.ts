@@ -363,7 +363,19 @@ export class ResultService {
     const membership = await this.prisma.teamMember.findUnique({
       where: { teamId_userId: { teamId: survey.ownerId, userId } },
     });
-    if (!membership) {
+    if (membership) {
+      return;
+    }
+    // 팀이 해산되면 team.service.ts의 disbandTeam이 teamMember 행을 전부
+    // 지우지만(leaderId는 그대로 둔다), spec 3.4에 따라 해산 당시 팀장에게는
+    // 결과 조회 권한이 남는다 — survey.service.ts computeCanManage /
+    // mypage.service.ts assertCanManage와 같은 조건(leaderId만 확인, 팀
+    // 활성 여부는 안 봄)으로 그 예외를 처리한다.
+    const team = await this.prisma.team.findUnique({
+      where: { id: survey.ownerId },
+      select: { leaderId: true },
+    });
+    if (!team || team.leaderId !== userId) {
       throw new ForbiddenException('이 결과를 확인할 권한이 없습니다.');
     }
   }
