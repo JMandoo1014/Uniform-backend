@@ -11,6 +11,9 @@ export class MySurveyResponseDto {
   achievementRate: number | null;
   deadlineAt: string | null;
   purgeAt: string | null;
+  // survey 도메인 DTO들의 canManage와 같은 정의 — TEAM은 leaderId ===
+  // 조회자, USER는 항상 true(이 목록엔 본인 설문만 나오므로).
+  canManage: boolean;
 
   constructor(init: MySurveyResponseDto) {
     Object.assign(this, init);

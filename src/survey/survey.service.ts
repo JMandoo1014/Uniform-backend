@@ -76,12 +76,16 @@ export class SurveyService {
       },
       include: SURVEY_WITH_QUESTIONS_INCLUDE,
     });
-    return new SurveyResponseDto(survey);
+    // 방금 만든 초안이므로 개인 초안이면 항상 본인, 팀 초안이면 방금 확인한
+    // assertActiveMembership과 별개로 팀장 여부를 다시 조회해 판단한다.
+    const canManage = await this.resolveCanManageForOne(survey, userId);
+    return new SurveyResponseDto(survey, canManage);
   }
 
   async getDraft(userId: string, surveyId: string): Promise<SurveyResponseDto> {
     const survey = await this.findAccessibleSurveyOrThrow(userId, surveyId);
-    return new SurveyResponseDto(survey);
+    const canManage = await this.resolveCanManageForOne(survey, userId);
+    return new SurveyResponseDto(survey, canManage);
   }
 
   // Spec 4.1: 낙관적 락(version) + 문항 전체 교체 방식의 임시저장. 4.3의
@@ -140,10 +144,14 @@ export class SurveyService {
         where: { id: surveyId },
         include: SURVEY_WITH_QUESTIONS_INCLUDE,
       });
-      throw new SurveyVersionConflictException(new SurveyResponseDto(latest));
+      const canManage = await this.resolveCanManageForOne(latest, userId);
+      throw new SurveyVersionConflictException(
+        new SurveyResponseDto(latest, canManage),
+      );
     }
 
-    return new SurveyResponseDto(updated);
+    const canManage = await this.resolveCanManageForOne(updated, userId);
+    return new SurveyResponseDto(updated, canManage);
   }
 
   // Spec 3.1: "팀 초안 삭제는 팀장 또는 만든 사람만." USER 초안은 기존 그대로
@@ -185,7 +193,8 @@ export class SurveyService {
     const survey = await this.findAccessibleSurveyOrThrow(userId, surveyId);
 
     if (survey.status === SurveyStatus.RECRUITING) {
-      return new SurveyResponseDto(survey);
+      const canManage = await this.resolveCanManageForOne(survey, userId);
+      return new SurveyResponseDto(survey, canManage);
     }
     if (survey.status !== SurveyStatus.DRAFT) {
       throw new SurveyNotDraftException();
@@ -227,7 +236,8 @@ export class SurveyService {
       });
     }
 
-    return new SurveyResponseDto(published);
+    const canManage = await this.resolveCanManageForOne(published, userId);
+    return new SurveyResponseDto(published, canManage);
   }
 
   // Spec 5.2: 모집 중인 설문만 게시 시각 최신순(동률이면 id 내림차순)으로.
@@ -262,7 +272,8 @@ export class SurveyService {
     const hasMore = rows.length > limit;
     const page = hasMore ? rows.slice(0, limit) : rows;
 
-    const displayNameByOwnerId = await this.resolveOwnerDisplayNames(page);
+    const { displayNameByOwnerId, teamLeaderIdByTeamId } =
+      await this.resolveOwnerInfo(page);
 
     const items = page.map(
       (survey) =>
@@ -270,6 +281,7 @@ export class SurveyService {
           survey,
           displayNameByOwnerId.get(survey.ownerId) ?? null,
           viewerId,
+          this.computeCanManage(survey, viewerId, teamLeaderIdByTeamId),
         ),
     );
 
@@ -307,12 +319,14 @@ export class SurveyService {
       }
     }
 
-    const displayNameByOwnerId = await this.resolveOwnerDisplayNames([survey]);
+    const { displayNameByOwnerId, teamLeaderIdByTeamId } =
+      await this.resolveOwnerInfo([survey]);
 
     return new SurveyDetailResponseDto(
       survey,
       displayNameByOwnerId.get(survey.ownerId) ?? null,
       viewerId,
+      this.computeCanManage(survey, viewerId, teamLeaderIdByTeamId),
     );
   }
 
@@ -543,9 +557,15 @@ export class SurveyService {
   }
 
   // Spec 3.3: 목록·상세에서 USER는 등록자 닉네임, TEAM은 팀 이름으로 표시한다.
-  private async resolveOwnerDisplayNames(
+  // canManage(팀장 판단) 계산도 여기서 같은 팀 조회에 얹어 배치 처리한다 —
+  // TeamService.isTeamLeader/assertActiveMembership은 해산된 팀이면 던지므로
+  // (findActiveTeamOrThrow), 표시용 읽기 전용 계산에는 쓰지 않고 직접 조회한다.
+  private async resolveOwnerInfo(
     surveys: { ownerType: SurveyOwnerType; ownerId: string }[],
-  ): Promise<Map<string, string | null>> {
+  ): Promise<{
+    displayNameByOwnerId: Map<string, string | null>;
+    teamLeaderIdByTeamId: Map<string, string>;
+  }> {
     const userOwnerIds = [
       ...new Set(
         surveys
@@ -568,12 +588,13 @@ export class SurveyService {
             select: { id: true, nickname: true },
           })
         : [];
-    const teams: { id: string; name: string }[] = teamOwnerIds.length
-      ? await this.prisma.team.findMany({
-          where: { id: { in: teamOwnerIds } },
-          select: { id: true, name: true },
-        })
-      : [];
+    const teams: { id: string; name: string; leaderId: string }[] =
+      teamOwnerIds.length
+        ? await this.prisma.team.findMany({
+            where: { id: { in: teamOwnerIds } },
+            select: { id: true, name: true, leaderId: true },
+          })
+        : [];
 
     const entries: [string, string | null][] = [
       ...owners.map((owner): [string, string | null] => [
@@ -582,6 +603,43 @@ export class SurveyService {
       ]),
       ...teams.map((team): [string, string | null] => [team.id, team.name]),
     ];
-    return new Map<string, string | null>(entries);
+
+    return {
+      displayNameByOwnerId: new Map<string, string | null>(entries),
+      teamLeaderIdByTeamId: new Map(
+        teams.map((team) => [team.id, team.leaderId]),
+      ),
+    };
+  }
+
+  private computeCanManage(
+    survey: { ownerType: SurveyOwnerType; ownerId: string },
+    viewerId: string,
+    teamLeaderIdByTeamId: Map<string, string>,
+  ): boolean {
+    if (survey.ownerType === SurveyOwnerType.USER) {
+      return survey.ownerId === viewerId;
+    }
+    return teamLeaderIdByTeamId.get(survey.ownerId) === viewerId;
+  }
+
+  // 단일 설문 응답(createDraft/getDraft/updateDraft/publish)에서 쓰는 편의
+  // 래퍼 — 배치용 resolveOwnerInfo/computeCanManage를 그대로 재사용한다.
+  private async resolveCanManageForOne(
+    survey: { ownerType: SurveyOwnerType; ownerId: string },
+    viewerId: string,
+  ): Promise<boolean> {
+    const { teamLeaderIdByTeamId } = await this.resolveOwnerInfo([survey]);
+    return this.computeCanManage(survey, viewerId, teamLeaderIdByTeamId);
+  }
+
+  // FormMate 연동: SurveyResponseDto를 만드는 다른 서비스(FormMateService)도
+  // canManage를 같은 기준으로 계산하기 위한 공개 진입점 — getAccessibleSurveyOrThrow와
+  // 같은 패턴.
+  async resolveCanManage(
+    survey: { ownerType: SurveyOwnerType; ownerId: string },
+    userId: string,
+  ): Promise<boolean> {
+    return this.resolveCanManageForOne(survey, userId);
   }
 }

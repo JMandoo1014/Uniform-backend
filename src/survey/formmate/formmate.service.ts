@@ -301,7 +301,13 @@ export class FormMateService {
         userId,
         surveyId,
       );
-      throw new SurveyVersionConflictException(new SurveyResponseDto(latest));
+      const canManage = await this.surveyService.resolveCanManage(
+        latest,
+        userId,
+      );
+      throw new SurveyVersionConflictException(
+        new SurveyResponseDto(latest, canManage),
+      );
     }
 
     return { newVersion };

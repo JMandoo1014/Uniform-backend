@@ -18,11 +18,15 @@ export class SurveyListItemResponseDto {
   status: SurveyListItem['status'];
   publishedAt: string | null;
   isOwner: boolean;
+  // survey-detail-response.dto.ts의 canManage와 같은 정의 — TEAM은
+  // leaderId === viewerId, USER는 isOwner와 동일.
+  canManage: boolean;
 
   constructor(
     survey: SurveyListItem,
     ownerNickname: string | null,
     viewerId: string,
+    canManage: boolean,
   ) {
     this.id = survey.id;
     this.title = survey.title;
@@ -34,5 +38,6 @@ export class SurveyListItemResponseDto {
     this.status = survey.status;
     this.publishedAt = survey.publishedAt?.toISOString() ?? null;
     this.isOwner = survey.ownerId === viewerId;
+    this.canManage = canManage;
   }
 }

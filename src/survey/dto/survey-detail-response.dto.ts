@@ -17,12 +17,18 @@ export class SurveyDetailResponseDto {
   deadlineAt: string | null;
   publishedAt: string | null;
   isOwner: boolean;
+  // 팀 설문 관리 권한 판단용 — USER는 isOwner와 같고, TEAM은 해산 여부와
+  // 무관하게 "현재 leaderId === viewerId"만 본다(팀 해산 후에도 해산 당시
+  // 팀장에게 관리 권한이 남는 spec 3.4 규칙과 맞물린다). 프론트가 이 필드
+  // 하나로 "관리 버튼을 보여줄지"를 판단할 수 있도록 추가한다.
+  canManage: boolean;
   questions: SurveyQuestionResponseDto[];
 
   constructor(
     survey: SurveyWithQuestions,
     ownerNickname: string | null,
     viewerId: string,
+    canManage: boolean,
   ) {
     this.id = survey.id;
     this.title = survey.title;
@@ -34,6 +40,7 @@ export class SurveyDetailResponseDto {
     this.deadlineAt = survey.deadlineAt?.toISOString() ?? null;
     this.publishedAt = survey.publishedAt?.toISOString() ?? null;
     this.isOwner = survey.ownerId === viewerId;
+    this.canManage = canManage;
     this.questions = survey.questions
       .sort((a, b) => a.orderNo - b.orderNo)
       .map((question) => new SurveyQuestionResponseDto(question));
