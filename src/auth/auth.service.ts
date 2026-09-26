@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { UserStatus } from '@prisma/client';
@@ -33,6 +33,8 @@ import { JwtPayload } from './types/jwt-payload.type';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
@@ -77,13 +79,19 @@ export class AuthService {
       emailVerificationTokenExpiresAt,
     });
 
-    // TODO: wire up an actual email provider. For now the token is returned
-    // directly so the signup -> verify flow can be exercised end-to-end.
+    // 이메일 발송이 아직 연동되지 않았다 — 토큰을 응답 본문에 내려주면 가입된
+    // 이메일만 알아도 누구나 인증을 완료할 수 있어 보안 사고가 된다(계정 탈취
+    // 경로). 응답에는 절대 포함하지 않고, 운영 환경이 아닐 때만 서버 로그로
+    // 확인할 수 있게 한다. TODO: 실제 이메일 발송(SES/SendGrid 등) 연동.
+    this.logDevOnlyToken(
+      'signup emailVerificationToken',
+      user.email,
+      emailVerificationToken,
+    );
     return {
       id: user.id,
       email: user.email,
       status: user.status,
-      emailVerificationToken,
     };
   }
 
@@ -179,23 +187,18 @@ export class AuthService {
 
   // Spec 2.4: "가입 이메일로 재설정 링크를 보낸다. 가입되지 않은 주소여도
   // 같은 안내 문구를 보여준다." 응답 형태(message)는 계정 유무와 무관하게
-  // 항상 동일하지만, resetToken 필드는 실제 계정이 있을 때만 채워진다.
-  //
-  // TODO: 실제 이메일 발송(SES/SendGrid 등)을 붙이는 즉시 resetToken을
-  // 응답에서 제거하고 이메일로만 전달할 것. 지금은 이메일 발송이 없어
-  // 개발/테스트 편의를 위한 임시 shim이다.
-  async requestPasswordReset(
-    dto: PasswordResetRequestDto,
-  ): Promise<{ resetToken?: string }> {
+  // 항상 동일하다 — resetToken은 계정 존재 여부와 무관하게 응답에 절대
+  // 포함하지 않는다(가입 이메일만 알면 누구나 비밀번호를 재설정할 수 있는
+  // 계정 탈취 취약점이었다). TODO: 실제 이메일 발송(SES/SendGrid 등) 연동.
+  async requestPasswordReset(dto: PasswordResetRequestDto): Promise<void> {
     const user = await this.userService.findByEmail(dto.email);
     if (!user) {
-      return {};
+      return;
     }
 
     const { token, expiresAt } = this.buildPasswordResetToken();
     await this.userService.setPasswordResetToken(user.id, token, expiresAt);
-
-    return { resetToken: token };
+    this.logDevOnlyToken('password resetToken', user.email, token);
   }
 
   async confirmPasswordReset(dto: PasswordResetConfirmDto): Promise<void> {
@@ -252,13 +255,31 @@ export class AuthService {
       dto.newEmail,
     );
 
-    // TODO: wire up an actual email provider (see requestPasswordReset TODO).
+    // requestPasswordReset과 같은 이유로 응답에는 토큰을 절대 포함하지 않는다.
+    // TODO: 실제 이메일 발송(SES/SendGrid 등) 연동.
+    this.logDevOnlyToken(
+      'pending-email-change emailVerificationToken',
+      updated.email,
+      token,
+    );
     return {
       id: updated.id,
       email: updated.email,
       status: updated.status,
-      emailVerificationToken: token,
     };
+  }
+
+  // 이메일 발송 연동 전까지 개발/테스트 환경에서만 토큰을 확인할 수 있게
+  // 서버 로그에 남긴다 — 어떤 환경에서도 응답 바디에는 넣지 않는다.
+  private logDevOnlyToken(
+    label: string,
+    email: string | null,
+    token: string,
+  ): void {
+    if (this.configService.get<string>('NODE_ENV') === 'production') {
+      return;
+    }
+    this.logger.debug(`[dev-only] ${label} for ${email}: ${token}`);
   }
 
   private buildPasswordResetToken(): { token: string; expiresAt: Date } {
