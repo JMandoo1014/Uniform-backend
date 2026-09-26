@@ -269,6 +269,8 @@ export class MypageService {
       ownerName,
       status: survey.status,
       questionCount: survey._count.questions,
+      category: survey.category,
+      estimatedMinutes: survey.estimatedMinutes,
       responseCount: survey.responseCount,
       targetCount: survey.targetCount,
       achievementRate: survey.targetCount

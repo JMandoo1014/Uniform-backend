@@ -6,6 +6,8 @@ export class MySurveyResponseDto {
   ownerName: string; // 본인 닉네임 또는 팀 이름 — "게시 명의"
   status: string; // DRAFT | RECRUITING | CLOSED | ARCHIVED | REMOVED
   questionCount: number;
+  category: string | null;
+  estimatedMinutes: number | null;
   responseCount: number;
   targetCount: number | null;
   achievementRate: number | null;

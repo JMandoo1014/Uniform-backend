@@ -57,6 +57,8 @@ export class SurveyResponseDto {
   title: string;
   description: string | null;
   status: SurveyWithQuestions['status'];
+  category: string | null;
+  estimatedMinutes: number | null;
   targetCount: number | null;
   deadlineAt: string | null;
   version: number;
@@ -75,6 +77,8 @@ export class SurveyResponseDto {
     this.title = survey.title;
     this.description = survey.description;
     this.status = survey.status;
+    this.category = survey.category;
+    this.estimatedMinutes = survey.estimatedMinutes;
     this.targetCount = survey.targetCount;
     this.deadlineAt = survey.deadlineAt?.toISOString() ?? null;
     this.version = survey.version;

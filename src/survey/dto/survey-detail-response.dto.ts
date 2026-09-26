@@ -13,6 +13,8 @@ export class SurveyDetailResponseDto {
   // Spec 3.3: 팀 설문은 팀 이름으로 표시한다 — USER는 등록자 닉네임.
   ownerNickname: string | null;
   status: SurveyWithQuestions['status'];
+  category: string | null;
+  estimatedMinutes: number | null;
   targetCount: number | null;
   deadlineAt: string | null;
   publishedAt: string | null;
@@ -36,6 +38,8 @@ export class SurveyDetailResponseDto {
     this.ownerType = survey.ownerType;
     this.ownerNickname = ownerNickname;
     this.status = survey.status;
+    this.category = survey.category;
+    this.estimatedMinutes = survey.estimatedMinutes;
     this.targetCount = survey.targetCount;
     this.deadlineAt = survey.deadlineAt?.toISOString() ?? null;
     this.publishedAt = survey.publishedAt?.toISOString() ?? null;
