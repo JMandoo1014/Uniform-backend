@@ -14,12 +14,13 @@ import { TokenResponseDto } from './dto/token-response.dto';
 import { AccessTokenResponseDto } from './dto/access-token-response.dto';
 
 // signup/changePendingEmail이 공유하는 응답 모양 — 별도 DTO 클래스 없이 순수
-// 타입 애노테이션 용도로만 쓴다(런타임 로직 변경 없음).
+// 타입 애노테이션 용도로만 쓴다(런타임 로직 변경 없음). emailVerificationToken은
+// 응답에 절대 포함하지 않는다(계정 탈취로 이어지는 보안 이슈였다) — 이메일
+// 발송이 연동되기 전까지는 개발 환경 서버 로그로만 확인한다.
 type PendingAccountResponse = {
   id: string;
   email: string | null;
   status: UserStatus;
-  emailVerificationToken: string;
 };
 
 @ApiTags('Auth')
@@ -65,11 +66,10 @@ export class AuthController {
   @Post('password/reset-request')
   async requestPasswordReset(
     @Body() dto: PasswordResetRequestDto,
-  ): Promise<{ message: string; resetToken?: string }> {
-    const { resetToken } = await this.authService.requestPasswordReset(dto);
+  ): Promise<{ message: string }> {
+    await this.authService.requestPasswordReset(dto);
     return {
       message: '가입된 이메일이면 비밀번호 재설정 안내를 보냈습니다.',
-      ...(resetToken !== undefined ? { resetToken } : {}),
     };
   }
 
