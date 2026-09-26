@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { UserStatus } from '@prisma/client';
 import { InvalidRefreshTokenException } from '../common/exceptions/business.exception';
 import { UserService } from '../user/user.service';
+import { MailService } from '../mail/mail.service';
 import { AuthService } from './auth.service';
 
 describe('AuthService.refresh', () => {
@@ -11,6 +12,10 @@ describe('AuthService.refresh', () => {
   let userService: { findById: jest.Mock };
   let jwtService: { verifyAsync: jest.Mock; signAsync: jest.Mock };
   let configService: { getOrThrow: jest.Mock; get: jest.Mock };
+  let mailService: {
+    sendEmailVerification: jest.Mock;
+    sendPasswordReset: jest.Mock;
+  };
 
   beforeEach(async () => {
     userService = { findById: jest.fn() };
@@ -23,6 +28,10 @@ describe('AuthService.refresh', () => {
       }),
       get: jest.fn((_key: string, fallback?: string) => fallback),
     };
+    mailService = {
+      sendEmailVerification: jest.fn(),
+      sendPasswordReset: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -30,6 +39,7 @@ describe('AuthService.refresh', () => {
         { provide: UserService, useValue: userService },
         { provide: JwtService, useValue: jwtService },
         { provide: ConfigService, useValue: configService },
+        { provide: MailService, useValue: mailService },
       ],
     }).compile();
 

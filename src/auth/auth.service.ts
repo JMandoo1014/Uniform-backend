@@ -19,6 +19,7 @@ import {
   RecentlyWithdrawnEmailException,
 } from '../common/exceptions/business.exception';
 import { UserService } from '../user/user.service';
+import { MailService } from '../mail/mail.service';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
@@ -39,6 +40,7 @@ export class AuthService {
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly mailService: MailService,
   ) {}
 
   async signup(dto: SignupDto) {
@@ -79,10 +81,16 @@ export class AuthService {
       emailVerificationTokenExpiresAt,
     });
 
-    // 이메일 발송이 아직 연동되지 않았다 — 토큰을 응답 본문에 내려주면 가입된
-    // 이메일만 알아도 누구나 인증을 완료할 수 있어 보안 사고가 된다(계정 탈취
-    // 경로). 응답에는 절대 포함하지 않고, 운영 환경이 아닐 때만 서버 로그로
-    // 확인할 수 있게 한다. TODO: 실제 이메일 발송(SES/SendGrid 등) 연동.
+    // 토큰은 메일로만 전달한다 — 응답 본문에 실으면 가입된 이메일만 알아도
+    // 누구나 인증을 완료할 수 있는 계정 탈취 경로였다(과거 임시 shim, PR #34
+    // 에서 제거). 발송 실패는 회원가입 자체를 실패시키지 않는다(정책은
+    // mail.service.ts 주석 참고) — 실패해도 계정은 만들어지고, 사용자는
+    // resend-verification으로 재발송받을 수 있다.
+    await this.mailService.sendEmailVerification(
+      dto.email,
+      emailVerificationToken,
+      emailVerificationTokenExpiresAt,
+    );
     this.logDevOnlyToken(
       'signup emailVerificationToken',
       user.email,
@@ -180,6 +188,7 @@ export class AuthService {
         token,
         expiresAt,
       );
+      await this.mailService.sendEmailVerification(dto.email, token, expiresAt);
     }
     // Intentionally no return value: the controller always responds with the
     // same generic message regardless of whether a user/email matched.
@@ -198,6 +207,7 @@ export class AuthService {
 
     const { token, expiresAt } = this.buildPasswordResetToken();
     await this.userService.setPasswordResetToken(user.id, token, expiresAt);
+    await this.mailService.sendPasswordReset(dto.email, token, expiresAt);
     this.logDevOnlyToken('password resetToken', user.email, token);
   }
 
@@ -255,8 +265,14 @@ export class AuthService {
       dto.newEmail,
     );
 
-    // requestPasswordReset과 같은 이유로 응답에는 토큰을 절대 포함하지 않는다.
-    // TODO: 실제 이메일 발송(SES/SendGrid 등) 연동.
+    // requestPasswordReset과 같은 이유로 응답에는 토큰을 절대 포함하지 않는다
+    // — 새 이메일로만 발송한다(변경 전 이메일이 아니라 새 이메일 소유를
+    // 확인하는 절차이므로).
+    await this.mailService.sendEmailVerification(
+      dto.newEmail,
+      token,
+      expiresAt,
+    );
     this.logDevOnlyToken(
       'pending-email-change emailVerificationToken',
       updated.email,
