@@ -44,10 +44,13 @@ export class MypageService {
     const teams = teamIds.length
       ? await this.prisma.team.findMany({
           where: { id: { in: teamIds } },
-          select: { id: true, name: true },
+          select: { id: true, name: true, leaderId: true },
         })
       : [];
     const teamNameById = new Map(teams.map((t) => [t.id, t.name]));
+    // canManage(팀장 여부) 계산도 이미 하고 있는 teams 조회에 leaderId만 얹어
+    // 함께 배치 처리한다 — survey.service.ts의 resolveOwnerInfo와 같은 패턴.
+    const teamLeaderIdById = new Map(teams.map((t) => [t.id, t.leaderId]));
 
     const surveys = await this.prisma.survey.findMany({
       where: {
@@ -61,14 +64,19 @@ export class MypageService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return surveys.map((survey) =>
-      this.toMySurveyDto(
+    return surveys.map((survey) => {
+      const canManage =
+        survey.ownerType === SurveyOwnerType.USER
+          ? survey.ownerId === userId
+          : teamLeaderIdById.get(survey.ownerId) === userId;
+      return this.toMySurveyDto(
         survey,
         survey.ownerType === SurveyOwnerType.USER
           ? (me.nickname ?? '')
           : (teamNameById.get(survey.ownerId) ?? ''),
-      ),
-    );
+        canManage,
+      );
+    });
   }
 
   // Spec 8.2: 제출한 설문(제목/제출일/점수) + 작성 중인 세션.
@@ -118,6 +126,7 @@ export class MypageService {
     return this.toMySurveyDto(
       await this.loadSurveyOrThrow(surveyId),
       ownerName,
+      true,
     );
   }
 
@@ -143,6 +152,7 @@ export class MypageService {
     return this.toMySurveyDto(
       await this.loadSurveyOrThrow(surveyId),
       ownerName,
+      true,
     );
   }
 
@@ -205,6 +215,7 @@ export class MypageService {
   private toMySurveyDto(
     survey: SurveyWithCount,
     ownerName: string,
+    canManage: boolean,
   ): MySurveyResponseDto {
     return new MySurveyResponseDto({
       id: survey.id,
@@ -220,6 +231,7 @@ export class MypageService {
         : null,
       deadlineAt: survey.deadlineAt?.toISOString() ?? null,
       purgeAt: survey.purgeAt?.toISOString() ?? null,
+      canManage,
     });
   }
 }

@@ -63,9 +63,14 @@ export class SurveyResponseDto {
   publishedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  // 팀 초안은 현재 팀원 누구나 조회·수정할 수 있지만(4.1) 관리(게시 이후
+  // 마감/보관 등)는 팀장만 가능하다 — survey-detail-response.dto.ts와 같은
+  // 정의의 canManage를 여기서도 내려줘 팀원 화면에서 "관리자 전용" 버튼을
+  // 구분할 수 있게 한다.
+  canManage: boolean;
   questions: SurveyQuestionResponseDto[];
 
-  constructor(survey: SurveyWithQuestions) {
+  constructor(survey: SurveyWithQuestions, canManage: boolean) {
     this.id = survey.id;
     this.title = survey.title;
     this.description = survey.description;
@@ -76,6 +81,7 @@ export class SurveyResponseDto {
     this.publishedAt = survey.publishedAt?.toISOString() ?? null;
     this.createdAt = survey.createdAt.toISOString();
     this.updatedAt = survey.updatedAt.toISOString();
+    this.canManage = canManage;
     this.questions = survey.questions
       .sort((a, b) => a.orderNo - b.orderNo)
       .map((question) => new SurveyQuestionResponseDto(question));

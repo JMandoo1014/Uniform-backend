@@ -111,6 +111,7 @@ describe('FormMateService', () => {
   };
   let surveyService: {
     getAccessibleSurveyOrThrow: jest.Mock;
+    resolveCanManage: jest.Mock<Promise<boolean>, [unknown, string]>;
     replaceSurveyQuestions: jest.Mock<
       Promise<void>,
       ReplaceSurveyQuestionsCall
@@ -152,11 +153,13 @@ describe('FormMateService', () => {
     prisma.survey.updateMany.mockResolvedValue({ count: 1 });
     surveyService = {
       getAccessibleSurveyOrThrow: jest.fn(),
+      resolveCanManage: jest.fn<Promise<boolean>, [unknown, string]>(),
       replaceSurveyQuestions: jest.fn<
         Promise<void>,
         ReplaceSurveyQuestionsCall
       >(),
     };
+    surveyService.resolveCanManage.mockResolvedValue(true);
     geminiService = { generateReply: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
