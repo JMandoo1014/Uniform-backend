@@ -107,8 +107,36 @@ function validateText(
   }
 }
 
+// 문항 하나의 값 자체가 유효한지(선택 개수·점수 범위·존재하는 보기·글자 수)만
+// 검사한다 — 필수/누락 여부는 호출자가 각자의 맥락에 맞게 따로 판단한다.
+function validateAnswerValue(
+  question: QuestionWithOptions,
+  raw: unknown,
+  errors: string[],
+): void {
+  switch (question.type) {
+    case SurveyQuestionType.SINGLE_CHOICE:
+      validateSingleChoice(question, raw, errors);
+      break;
+    case SurveyQuestionType.MULTI_CHOICE:
+      validateMultiChoice(question, raw, errors);
+      break;
+    case SurveyQuestionType.SCALE:
+      validateScale(question, raw, errors);
+      break;
+    case SurveyQuestionType.SHORT_ANSWER:
+      validateText(question, raw, SHORT_ANSWER_MAX_LENGTH, errors);
+      break;
+    case SurveyQuestionType.NARRATIVE:
+      validateText(question, raw, NARRATIVE_MAX_LENGTH, errors);
+      break;
+  }
+}
+
 // Spec 4.3/5.3: 서버는 설문에 없는 문항, 필수 누락, 선택 개수·점수 범위·길이
 // 위반을 확인해 거부한다. 위반 사항을 모두 모아 반환한다(게시 검증과 동일한 패턴).
+// 제출(submit)의 answers는 그 시점의 전체 스냅샷으로 취급한다 — 여기 없는
+// 문항은 "빈 답"이다(response.service.ts가 세션에서도 같은 기준으로 지운다).
 export function validateSubmittedAnswers(
   survey: SurveyWithQuestions,
   rawAnswers: Record<string, unknown>,
@@ -132,23 +160,30 @@ export function validateSubmittedAnswers(
       continue;
     }
 
-    switch (question.type) {
-      case SurveyQuestionType.SINGLE_CHOICE:
-        validateSingleChoice(question, raw, errors);
-        break;
-      case SurveyQuestionType.MULTI_CHOICE:
-        validateMultiChoice(question, raw, errors);
-        break;
-      case SurveyQuestionType.SCALE:
-        validateScale(question, raw, errors);
-        break;
-      case SurveyQuestionType.SHORT_ANSWER:
-        validateText(question, raw, SHORT_ANSWER_MAX_LENGTH, errors);
-        break;
-      case SurveyQuestionType.NARRATIVE:
-        validateText(question, raw, NARRATIVE_MAX_LENGTH, errors);
-        break;
+    validateAnswerValue(question, raw, errors);
+  }
+
+  return errors;
+}
+
+// Spec 5.3 "답 입력·변경"(임시저장): 아직 작성 중이라 빈 칸·미완성이 정상이므로
+// 필수 여부는 검사하지 않는다 — 다만 채워 넣은 값 자체가 유효한지(범위·존재하는
+// 보기·글자 수)는 제출과 동일한 기준으로 검사해, 잘못된 값이 세션에 쌓였다가
+// 그대로 제출되는 걸 막는다. 지운 답(이 객체에 아예 없는 문항)은 에러 없이
+// 통과시킨다 — "비움"과 "잘못된 값"은 구분해야 한다.
+export function validateAnswerValues(
+  survey: SurveyWithQuestions,
+  rawAnswers: Record<string, unknown>,
+): string[] {
+  const errors: string[] = [];
+  const questionByKey = new Map(survey.questions.map((q) => [q.stableKey, q]));
+
+  for (const [stableKey, raw] of Object.entries(rawAnswers)) {
+    const question = questionByKey.get(stableKey);
+    if (!question || isBlankAnswer(question.type, raw)) {
+      continue;
     }
+    validateAnswerValue(question, raw, errors);
   }
 
   return errors;

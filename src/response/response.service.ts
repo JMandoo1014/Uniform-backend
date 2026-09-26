@@ -19,6 +19,7 @@ import { getKstWeekStart } from '../common/utils/kst-date.util';
 import { SurveyWithQuestions } from '../survey/dto/survey-response.dto';
 import {
   hasSameScaleWarning,
+  validateAnswerValues,
   validateSubmittedAnswers,
 } from './response-answer.validator';
 import { SaveAnswersDto } from './dto/save-answers.dto';
@@ -88,9 +89,21 @@ export class ResponseService {
     const entries = Object.entries(dto.answers).filter(([stableKey]) =>
       knownStableKeys.has(stableKey),
     );
+    const answersByKey = Object.fromEntries(entries);
 
-    await this.prisma.$transaction(
-      entries.map(([stableKey, value]) =>
+    const errors = validateAnswerValues(survey, answersByKey);
+    if (errors.length > 0) {
+      throw new AnswerValidationException(errors);
+    }
+
+    // 화면에서 지운 답(요청에 아예 없는 문항)의 예전 값이 세션에 남아있으면
+    // "이어서 응답" 화면에 되살아나 보이고, 제출 시 결과에도 섞여 들어갈 수
+    // 있다 — 이번 저장 요청에 없는 문항의 기존 답을 먼저 지운다.
+    await this.prisma.$transaction([
+      this.prisma.sessionAnswer.deleteMany({
+        where: { sessionId, questionId: { notIn: Object.keys(answersByKey) } },
+      }),
+      ...entries.map(([stableKey, value]) =>
         this.prisma.sessionAnswer.upsert({
           where: { sessionId_questionId: { sessionId, questionId: stableKey } },
           create: {
@@ -101,7 +114,7 @@ export class ResponseService {
           update: { value: value as Prisma.InputJsonValue },
         }),
       ),
-    );
+    ]);
 
     return { success: true };
   }
@@ -157,6 +170,16 @@ export class ResponseService {
       if (count === 0) {
         return null;
       }
+
+      // submit의 answers는 그 시점의 전체 스냅샷이다 — 여기 없는 문항은
+      // "지운 답"이므로 세션에 남아있던 예전 값을 먼저 지운다. 이걸 안 하면
+      // 자동저장 뒤 지우고 제출한 답이 세션에 그대로 남아 결과 집계에 섞인다.
+      await tx.sessionAnswer.deleteMany({
+        where: {
+          sessionId,
+          questionId: { notIn: Object.keys(dto.answers) },
+        },
+      });
 
       await Promise.all(
         Object.entries(dto.answers).map(([stableKey, value]) =>
