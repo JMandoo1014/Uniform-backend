@@ -124,23 +124,47 @@ export class AccountNotActiveException extends BusinessException {
 }
 
 // Spec 5.1/3.3: 본인 설문 또는 자기 팀의 팀 설문에는 응답할 수 없다.
-export class OwnSurveyResponseForbiddenException extends BusinessException {
+// 프론트가 message 문자열이 아니라 고정된 code로 케이스를 구분해야 해서
+// (문구가 바뀌면 프론트가 깨짐) SurveyVersionConflictException과 같은
+// 패턴 — BusinessException 대신 HttpException을 바로 상속해 객체 바디에
+// code를 실어 보낸다. 기존 statusCode/message/path/timestamp 필드는 그대로,
+// code만 추가된다(새 스키마 아님) — HttpExceptionFilter가 message/statusCode를
+// 뺀 나머지를 이미 그대로 얹어주므로 필터 쪽 변경은 필요 없다.
+export class OwnSurveyResponseForbiddenException extends HttpException {
   constructor() {
-    super('본인이 만든 설문에는 응답할 수 없습니다.', HttpStatus.FORBIDDEN);
+    super(
+      {
+        message: '본인이 만든 설문에는 응답할 수 없습니다.',
+        code: 'OWNER_CANNOT_RESPOND',
+      },
+      HttpStatus.FORBIDDEN,
+    );
   }
 }
 
 // Spec 5.1/5.5: 모집 중이 아니거나(마감/보관/운영삭제 등) 마감 시각이 지난 설문.
-export class SurveyNotOpenException extends BusinessException {
+export class SurveyNotOpenException extends HttpException {
   constructor() {
-    super('모집 중인 설문이 아닙니다.', HttpStatus.CONFLICT);
+    super(
+      {
+        message: '모집 중인 설문이 아닙니다.',
+        code: 'SURVEY_NOT_RECRUITING',
+      },
+      HttpStatus.CONFLICT,
+    );
   }
 }
 
 // Spec 5.1: 이미 제출을 완료한 설문은 다시 응답할 수 없다.
-export class AlreadyRespondedException extends BusinessException {
+export class AlreadyRespondedException extends HttpException {
   constructor() {
-    super('이미 응답을 완료한 설문입니다.', HttpStatus.CONFLICT);
+    super(
+      {
+        message: '이미 응답을 완료한 설문입니다.',
+        code: 'ALREADY_RESPONDED',
+      },
+      HttpStatus.CONFLICT,
+    );
   }
 }
 
