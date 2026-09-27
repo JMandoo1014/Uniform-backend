@@ -19,6 +19,9 @@ export class SurveyDetailResponseDto {
   status: SurveyWithQuestions['status'];
   category: string | null;
   estimatedMinutes: number | null;
+  // 2026-09-27부터 노출(원래 계산 공식이 없어 제외했던 것 — mypage 응답의
+  // responseCount와 같은 패턴, Survey.responseCount를 그대로 읽는다).
+  responseCount: number;
   targetCount: number | null;
   deadlineAt: string | null;
   publishedAt: string | null;
@@ -51,6 +54,7 @@ export class SurveyDetailResponseDto {
     this.status = survey.status;
     this.category = survey.category;
     this.estimatedMinutes = survey.estimatedMinutes;
+    this.responseCount = survey.responseCount;
     this.targetCount = survey.targetCount;
     this.deadlineAt = survey.deadlineAt?.toISOString() ?? null;
     this.publishedAt = survey.publishedAt?.toISOString() ?? null;
