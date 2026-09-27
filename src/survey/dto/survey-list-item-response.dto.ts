@@ -4,11 +4,15 @@ export type SurveyListItem = Prisma.SurveyGetPayload<{
   include: { _count: { select: { questions: true } } };
 }>;
 
-// Spec 5.2 표시 정보 중 이번 범위에 포함된 것만 반환한다. 응답 수는 계산
-// 공식/Response 도메인이 아직 없어 제외한다(사용자 확인 완료). 예상 소요
-// 시간(estimatedMinutes)은 2026-09-27부터 작성자가 직접 입력한 값을 그대로
-// 내려준다 — spec 5.2의 "3분 이내/5분 이내/6분 이상" 버킷 필터도 이 값
-// 기준으로 계산한다(survey.service.ts listRecruiting 참고).
+// Spec 5.2 표시 정보. 응답 수(responseCount)는 원래 계산 공식/Response
+// 도메인이 없어 제외했었지만(2026-09-24 결정), Survey.responseCount가 실제
+// 제출 수로 채워지기 시작한 뒤로는 그 이유가 없어져 2026-09-27부터 그대로
+// 노출한다(schema.prisma의 Survey.responseCount 주석 참고 — 캐시/성능
+// 관련 별도 이유는 없었음, 스키마 필드를 그대로 읽는 것뿐이라 추가 조회
+// 비용도 없다). 예상 소요 시간(estimatedMinutes)은 2026-09-27부터 작성자가
+// 직접 입력한 값을 그대로 내려준다 — spec 5.2의 "3분 이내/5분 이내/6분
+// 이상" 버킷 필터도 이 값 기준으로 계산한다(survey.service.ts listRecruiting
+// 참고).
 export class SurveyListItemResponseDto {
   id: string;
   title: string;
@@ -20,6 +24,7 @@ export class SurveyListItemResponseDto {
   // USER면 null.
   teamId: string | null;
   questionCount: number;
+  responseCount: number;
   category: string | null;
   estimatedMinutes: number | null;
   targetCount: number | null;
@@ -44,6 +49,7 @@ export class SurveyListItemResponseDto {
     this.teamId =
       survey.ownerType === SurveyOwnerType.TEAM ? survey.ownerId : null;
     this.questionCount = survey._count.questions;
+    this.responseCount = survey.responseCount;
     this.category = survey.category;
     this.estimatedMinutes = survey.estimatedMinutes;
     this.targetCount = survey.targetCount;
