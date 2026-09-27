@@ -62,6 +62,26 @@ export class MailService {
     );
   }
 
+  // Spec 8.4: 운영 삭제·이용 제한·닉네임 강제 변경·보상 발송 등 "앱 + 이메일"
+  // 알림. 문구에 관리자가 입력한 사유 등이 들어가므로 HTML로 해석되지 않게 이스케이프한다.
+  async sendNotice(
+    to: string,
+    subject: string,
+    message: string,
+  ): Promise<void> {
+    const escaped = message
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+    await this.send(
+      to,
+      `[UniForm] ${subject}`,
+      `<p>${escaped}</p>` +
+        `<p><a href="${this.frontendUrl}">UniForm 바로가기</a></p>`,
+    );
+  }
+
   // 발송 실패를 호출자(AuthService)에 전파하지 않는다 — 회원가입/이메일
   // 변경/비밀번호 재설정 요청 자체는 메일 발송 성공 여부와 무관하게 항상
   // 그대로 성공 처리하고, 실패는 여기서 로그로만 남긴다(운영 환경 포함, 항상

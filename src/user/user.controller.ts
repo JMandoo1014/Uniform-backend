@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { UserStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/types/jwt-payload.type';
@@ -32,7 +33,11 @@ export class UserController {
     if (!user) {
       throw new NotFoundException('사용자를 찾을 수 없습니다.');
     }
-    return new UserResponseDto(user);
+    const restriction =
+      user.status === UserStatus.RESTRICTED
+        ? await this.userService.findActiveRestriction(user.id)
+        : null;
+    return new UserResponseDto(user, restriction);
   }
 
   @Patch('me')

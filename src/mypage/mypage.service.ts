@@ -198,10 +198,11 @@ export class MypageService {
     );
   }
 
-  // Spec 8.2: 받은 보상 내역(주차/순위/발송일).
+  // Spec 8.2: 받은 보상 내역(주차/순위/발송일). 대상으로만 확정되고 아직
+  // 발송 기록이 없는 행은 "받은" 보상이 아니므로 뺀다.
   async getMyCoupons(userId: string): Promise<MyCouponDto[]> {
     const rewards = await this.prisma.leaderboardReward.findMany({
-      where: { userId },
+      where: { userId, sentAt: { not: null } },
       orderBy: { weekStart: 'desc' },
     });
 
@@ -210,8 +211,8 @@ export class MypageService {
         new MyCouponDto({
           weekStart: reward.weekStart.toISOString(),
           rank: reward.rank,
-          couponType: reward.couponType,
-          sentAt: reward.sentAt.toISOString(),
+          couponType: reward.rewardText ?? '',
+          sentAt: reward.sentAt!.toISOString(),
         }),
     );
   }
