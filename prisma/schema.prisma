@@ -17,13 +17,34 @@ enum UserStatus {
 enum Gender {
   MALE
   FEMALE
-  OTHER
+  PREFER_NOT_TO_SAY
 }
 
 enum EnrollmentStatus {
   ENROLLED
   LEAVE_OF_ABSENCE
   GRADUATED
+  NOT_APPLICABLE
+}
+
+enum GradeLevel {
+  FRESHMAN
+  SOPHOMORE
+  JUNIOR
+  SENIOR_OR_ABOVE
+  GRADUATE
+  NOT_APPLICABLE
+}
+
+enum MajorField {
+  HUMANITIES_SOCIAL
+  BUSINESS
+  ENGINEERING
+  NATURAL_SCIENCE
+  MEDICINE
+  ARTS_SPORTS
+  EDUCATION
+  NOT_APPLICABLE
 }
 
 enum SurveyOwnerType {
@@ -48,30 +69,116 @@ enum SurveyQuestionType {
   ETC
 }
 
+enum FormMateMessageRole {
+  USER
+  ASSISTANT
+}
+
+enum FormMateChangeStatus {
+  PENDING
+  APPLIED
+  REVERTED
+  REJECTED
+}
+
+enum ResponseSessionStatus {
+  IN_PROGRESS
+  SUBMITTED
+}
+
+// Spec 8.4: notification catalog. Team-domain events (team join/publish/leader
+// change/disband) are written here too so Dashboard recent-activity (12.3 ⑩)
+// can reuse one table instead of a separate activity log.
+enum NotificationType {
+  SURVEY_CLOSED
+  TEAM_JOINED
+  TEAM_SURVEY_PUBLISHED
+  TEAM_LEADER_CHANGED
+  TEAM_DISBANDED
+  SEASON_ENDED
+  REWARD_SELECTED
+  REWARD_SENT
+  PURGE_WARNING
+  SURVEY_REMOVED
+  ACCOUNT_RESTRICTED
+  NICKNAME_FORCED
+  // Spec 8.5 / 12.3⑨: Dashboard "최근 활동" 피드가 새 테이블 없이 이 알림
+  // 테이블을 재사용하기로 확정되어 추가 — 본인 활동 기록용이라 TEAM_SURVEY_PUBLISHED
+  // (다른 팀원에게 가는 알림)와 달리 행위자 본인에게만 쌓인다.
+  RESPONSE_SUBMITTED
+  SURVEY_PUBLISHED
+  TEAM_NAME_FORCED
+}
+
 model User {
-  id                 String           @id @default(uuid())
-  email              String           @unique
+  id                 String            @id @default(uuid())
+  email              String?           @unique
   passwordHash       String
-  nickname           String           @unique
-  gender             Gender
-  grade              Int
-  majorField         String
-  enrollmentStatus   EnrollmentStatus
-  marketingOptIn     Boolean          @default(false)
-  status             UserStatus       @default(PENDING_VERIFICATION)
+  nickname           String?           @unique
+  gender             Gender?
+  grade              GradeLevel?
+  majorField         MajorField?
+  enrollmentStatus   EnrollmentStatus?
+  marketingOptIn     Boolean           @default(false)
+  status             UserStatus        @default(PENDING_VERIFICATION)
   agreedTermsVersion String
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  // Spec 10.1: admin accounts are granted by the dev team, not self-service signup.
+  isAdmin            Boolean           @default(false)
+  // Spec 6.3/11: 운영팀 구성원 계정은 리더보드에서 숨기고 보상 대상에서 뺀다.
+  // 관리자 콘솔의 "운영팀 지정"으로 켜고 끈다.
+  isStaff            Boolean           @default(false)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
 
   // Not in the original spec; required to implement POST /auth/verify-email.
   emailVerificationToken          String?   @unique
   emailVerificationTokenExpiresAt DateTime?
 
-  statusHistories UserStatusHistory[]
-  ledTeams        Team[]              @relation("TeamLeader")
-  teamMemberships TeamMember[]
+  // Not in the original spec; required to implement POST /auth/password/reset-confirm.
+  passwordResetToken          String?   @unique
+  passwordResetTokenExpiresAt DateTime?
+
+  // Spec 8.1 / 2.3: marketing opt-in changes only need the latest change timestamp.
+  marketingOptInChangedAt DateTime?
+
+  statusHistories  UserStatusHistory[]
+  profileHistories UserProfileHistory[]
+  ledTeams         Team[]               @relation("TeamLeader")
+  teamMemberships  TeamMember[]
+
+  responseSessions   ResponseSession[]
+  leaderboardScores  LeaderboardScore[]
+  leaderboardRewards LeaderboardReward[]
+  notifications      Notification[]
+  restrictions       UserRestriction[]   @relation("RestrictedUser")
+  restrictionsIssued UserRestriction[]   @relation("RestrictionIssuedBy")
+  adminActionLogs    AdminActionLog[]    @relation("AdminActor")
 
   @@map("users")
+}
+
+// Spec 2.3: "변경 전후 값과 시각을 기록한다" for nickname/profile edits.
+model UserProfileHistory {
+  id        String   @id @default(uuid())
+  userId    String
+  field     String
+  oldValue  String?
+  newValue  String?
+  changedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_profile_histories")
+}
+
+// Spec 2.5: "탈퇴 이메일을 해시로 보관한다" to block re-signup for 30 days.
+model WithdrawnEmail {
+  id          String   @id @default(uuid())
+  emailHash   String   @unique
+  withdrawnAt DateTime @default(now())
+
+  @@map("withdrawn_emails")
 }
 
 model UserStatusHistory {
@@ -124,7 +231,7 @@ model Survey {
   title       String
   description String?
   status      SurveyStatus    @default(DRAFT)
-  targetCount Int
+  targetCount Int?
   deadlineAt  DateTime?
   publishedAt DateTime?
   closedAt    DateTime?
@@ -133,24 +240,48 @@ model Survey {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
-  questions SurveyQuestion[]
+  // Added for the Response domain (deferred here per the 2026-09-24 decision
+  // log entry "GET /surveys 응답에서 responseCount 필드 제외" — now backed by
+  // real submission counts, 지호 쪽 list/detail endpoints can start returning it).
+  responseCount Int @default(0)
+
+  // Spec 3.1 "팀 초안 삭제는 팀장 또는 만든 사람만" — ownerId is the team for a
+  // team-owned survey, so the original author needs its own field. USER-owned
+  // surveys back-fill this to ownerId (the two are the same person there).
+  creatorId String
+
+  // 프론트 카테고리 필터·소요 시간 표시용 (2026-09-27 결정) — 명세서에 고정된
+  // 카테고리 후보군이 없어 자유 문자열로 둔다. estimatedMinutes는 작성자가
+  // 직접 입력하는 값이며, spec 5.2의 "예상 소요 시간(3분 이내/5분 이내/6분
+  // 이상)" 버킷 필터가 이 값을 기준으로 계산된다. 둘 다 선택 입력이라 기존
+  // 설문은 null로 남아도 문제없다 — 게시 검증(validatePublishableSurvey)에서
+  // 요구하지 않는다.
+  category         String?
+  estimatedMinutes Int?
+
+  questions               SurveyQuestion[]
+  responseSessions        ResponseSession[]
+  formMateMessages        FormMateMessage[]
+  formMateProposedChanges FormMateProposedChange[]
 
   @@index([ownerType, ownerId])
   @@map("surveys")
 }
 
 model SurveyQuestion {
-  id           String             @id @default(uuid())
-  surveyId     String
-  orderNo      Int
-  stableKey    String
-  type         SurveyQuestionType
-  questionText String
-  required     Boolean            @default(true)
-  minSelect    Int?
-  maxSelect    Int?
-  minScale     Int?
-  maxScale     Int?
+  id            String             @id @default(uuid())
+  surveyId      String
+  orderNo       Int
+  stableKey     String
+  type          SurveyQuestionType
+  questionText  String
+  required      Boolean            @default(true)
+  minSelect     Int?
+  maxSelect     Int?
+  minScale      Int?
+  maxScale      Int?
+  minScaleLabel String?
+  maxScaleLabel String?
 
   survey  Survey         @relation(fields: [surveyId], references: [id], onDelete: Cascade)
   options SurveyOption[]
@@ -161,13 +292,266 @@ model SurveyQuestion {
 }
 
 model SurveyOption {
-  id         String @id @default(uuid())
+  id         String  @id @default(uuid())
   questionId String
   orderNo    Int
   label      String
+  isEtc      Boolean @default(false)
 
   question SurveyQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
   @@unique([questionId, orderNo])
   @@map("survey_options")
+}
+
+// Spec 4.2: FormMate와 나눈 대화. 팀 초안은 팀원 전체가 같은 기록을 봐야 하므로
+// 세션/메모리가 아니라 DB에 영구 저장한다.
+model FormMateMessage {
+  id        String              @id @default(uuid())
+  surveyId  String
+  userId    String
+  role      FormMateMessageRole
+  content   String
+  createdAt DateTime            @default(now())
+
+  survey  Survey                   @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  changes FormMateProposedChange[]
+
+  @@index([surveyId, createdAt])
+  @@map("formmate_messages")
+}
+
+// Spec 4.2: AI가 제안한 변경 하나. 사용자가 changeIds로 고른 것만 반영된다.
+// before는 AI가 아니라 서버가 생성 시점에 현재 DB 상태에서 직접 계산해 저장한다
+// (되돌리기의 신뢰성 확보 — AI가 지어낸 "이전 상태"를 믿지 않는다).
+model FormMateProposedChange {
+  id              String               @id @default(uuid())
+  messageId       String
+  surveyId        String
+  // "ADD_QUESTION" | "UPDATE_QUESTION" | "DELETE_QUESTION" | "UPDATE_OPTION"
+  type            String
+  summary         String
+  // ADD_QUESTION 이외 타입은 대상 문항의 stableKey. apply/revert 시 before/after
+  // JSON 안이 아니라 여기서 바로 읽는다(ADD_QUESTION 되돌리기처럼 대상 id가
+  // before/after 어느 한쪽에도 없을 수 있어서 별도 컬럼으로 둔다).
+  targetStableKey String?
+  before          Json?
+  after           Json?
+  status          FormMateChangeStatus @default(PENDING)
+  createdAt       DateTime             @default(now())
+  appliedAt       DateTime?
+
+  message FormMateMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  survey  Survey          @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+
+  @@map("formmate_proposed_changes")
+}
+
+// ============================================================
+// Response domain (5장) — 응답 세션과 답변
+// ============================================================
+
+// Spec: "응답 세션 | 한 회원이 설문에 답하는 작업 기록. 중단 후 이어서 답할 때 쓴다."
+// One session per (survey, user) — starting again just resumes the existing one.
+model ResponseSession {
+  id          String                @id @default(uuid())
+  surveyId    String
+  userId      String
+  status      ResponseSessionStatus @default(IN_PROGRESS)
+  startedAt   DateTime              @default(now())
+  submittedAt DateTime?
+
+  // Spec 5.4: whether the respondent dismissed the same-scale-answer warning
+  // and submitted anyway (kept for admin review, 10.4/6.6).
+  sameScaleWarningAcknowledged Boolean @default(false)
+
+  // Spec 10.2/10.4: admin can exclude a fraudulent submission from result
+  // aggregation and claw back its leaderboard point without deleting the row.
+  excludedAt        DateTime?
+  excludedReason    String?
+  excludedByAdminId String?
+
+  survey  Survey            @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answers SessionAnswer[]
+  score   LeaderboardScore?
+
+  @@unique([surveyId, userId])
+  @@index([userId])
+  @@map("response_sessions")
+}
+
+// One row per question per session; upserted on autosave (PATCH .../answers)
+// and left in place after submit as the finalized answer record.
+model SessionAnswer {
+  id         String   @id @default(uuid())
+  sessionId  String
+  questionId String
+  // Json because the shape varies by question type: string (single/short/etc),
+  // string[] (multiple), number (scale).
+  value      Json
+  updatedAt  DateTime @updatedAt
+
+  session ResponseSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, questionId])
+  @@map("session_answers")
+}
+
+// ============================================================
+// Leaderboard domain (6장)
+// ============================================================
+
+// One row per awarded point (always 1, per submission). Weekly rank is
+// SUM(points) grouped by (userId, weekStart) — computed at query time per
+// spec 6.4 "실시간 자동 갱신은 필수가 아니다", no separate rank cache needed.
+model LeaderboardScore {
+  id           String   @id @default(uuid())
+  userId       String
+  submissionId String   @unique
+  // KST Monday 00:00 of the week the submission landed in (spec 6.2).
+  weekStart    DateTime
+  points       Int      @default(1)
+  awardedAt    DateTime @default(now())
+
+  // Spec 10.4: admin can deduct a fraudulent point; row is kept, not deleted.
+  revokedAt        DateTime?
+  revokedReason    String?
+  revokedByAdminId String?
+
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  submission ResponseSession @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([weekStart, userId])
+  @@map("leaderboard_scores")
+}
+
+// Singleton row (id fixed to "default"). Spec 6.3: reward is TBD, admin edits
+// the announcement shown on the leaderboard instead of a hardcoded value.
+// 관리자 콘솔의 보상 안내 화면(제목/설명/1~3위 보상/동점 규칙)과 같은 구조.
+model LeaderboardConfig {
+  id               String   @id @default("default")
+  title            String   @default("주간 보상 안내")
+  body             String   @default("보상은 추후 공지")
+  // 1~3위 보상 문구, 순서대로 [1위, 2위, 3위].
+  tiers            String[] @default([])
+  tieRuleText      String   @default("동점자의 보상 대상자는 무작위 추첨으로 선정됩니다.")
+  updatedAt        DateTime @updatedAt
+  updatedByAdminId String?
+
+  @@map("leaderboard_config")
+}
+
+// Spec 6.5/10.4: tie-break lottery for reward ranks. One draw per week,
+// never re-run ("재실행 불가").
+model LeaderboardLottery {
+  id                String   @id @default(uuid())
+  weekStart         DateTime @unique
+  result            Json
+  executedAt        DateTime @default(now())
+  executedByAdminId String
+
+  @@map("leaderboard_lotteries")
+}
+
+// Spec 6.3/10.4: 주차별 보상 대상(정산 "대상 확정" 때 생성)과 순위별 발송 기록.
+// GET /mypage/coupons는 발송된(sentAt 있는) 행만 읽는다.
+model LeaderboardReward {
+  id            String    @id @default(uuid())
+  userId        String
+  weekStart     DateTime
+  // 보상 자리(spec 6.3 "1위 1명, 2위 1명, 3위 1명"). 동점자가 자리 안에 함께
+  // 들어오면 리더보드 정렬 순서대로 자리를 나눈다.
+  rank          Int
+  // 관리자가 발송 기록 때 직접 입력한 보상 내용. 대상 확정 시점엔 비어 있다.
+  rewardText    String?   @map("couponType")
+  sentAt        DateTime?
+  sentByAdminId String?
+  createdAt     DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weekStart])
+  @@unique([weekStart, rank])
+  @@index([weekStart])
+  @@map("leaderboard_rewards")
+}
+
+// 주차별 보상 정산 진행 단계(관리자 콘솔): 1 응답 확인 → 2 순위 확정 →
+// 3 동점 추첨 → 4 대상 확정 → 5 발송 기록. 행이 없으면 1단계다. 순위를
+// 확정한(3단계 이상) 주차의 응답은 더 이상 제외·점수 조정할 수 없다.
+model LeaderboardRewardWeek {
+  weekStart DateTime @id
+  step      Int      @default(1)
+  updatedAt DateTime @updatedAt
+
+  @@map("leaderboard_reward_weeks")
+}
+
+// ============================================================
+// Notification (8.4절) — Dashboard 최근활동(12.3 ⑩)이 재사용하는 테이블.
+// Team 도메인 이벤트(가입/게시/팀장변경/해산)도 지호 쪽에서 이 테이블에 씀.
+// ============================================================
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  message   String
+  targetUrl String?
+  emailSent Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+// ============================================================
+// Admin domain (10장)
+// ============================================================
+
+// Spec 10.1: "모든 조치는 조치자·시각·대상·사유와 함께 기록하고 지우지 않는다."
+// 관리자 콘솔의 조치 기록 화면이 읽는 단일 감사 로그 — 제한·추첨·보상 발송·
+// 응답 제외처럼 자기 테이블이 따로 있는 조치도 여기에 함께 남긴다.
+model AdminActionLog {
+  id          String   @id @default(uuid())
+  adminId     String
+  action      String
+  targetType  String
+  targetId    String
+  // 기록 당시 대상 이름(설문 제목·닉네임 등). 대상이 나중에 바뀌어도 그대로 둔다.
+  targetName  String?
+  reason      String?
+  memo        String?
+  beforeValue String?
+  afterValue  String?
+  createdAt   DateTime @default(now())
+
+  admin User @relation("AdminActor", fields: [adminId], references: [id])
+
+  @@index([targetType, targetId])
+  @@map("admin_action_logs")
+}
+
+// Spec 10.3: 이용 제한/해제. Kept separate from User.status/UserStatusHistory
+// (both already exist, owned by 지호's User domain) so duration/lift tracking
+// doesn't require touching that shared table.
+model UserRestriction {
+  id               String    @id @default(uuid())
+  userId           String
+  reason           String
+  durationDays     Int?
+  startedAt        DateTime  @default(now())
+  endsAt           DateTime?
+  liftedAt         DateTime?
+  liftedReason     String?
+  createdByAdminId String
+
+  user           User @relation("RestrictedUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdByAdmin User @relation("RestrictionIssuedBy", fields: [createdByAdminId], references: [id])
+
+  @@index([userId])
+  @@map("user_restrictions")
 }

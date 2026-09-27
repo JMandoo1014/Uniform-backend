@@ -1,7 +1,770 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  NotificationType,
+  Prisma,
+  SurveyOwnerType,
+  SurveyQuestionType,
+  SurveyStatus,
+  UserStatus,
+} from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { TeamService } from '../team/team.service';
+import {
+  AccountNotActiveException,
+  NotTeamMemberException,
+  SurveyNotDraftException,
+  SurveyVersionConflictException,
+  TeamDraftDeleteForbiddenException,
+} from '../common/exceptions/business.exception';
+import { kstDateStringToUtcEndOfDay } from '../common/utils/kst-date.util';
+import { validateSubmittedAnswers } from '../response/response-answer.validator';
+import { CreateSurveyDraftDto } from './dto/create-survey-draft.dto';
+import { UpdateSurveyDraftDto } from './dto/update-survey-draft.dto';
+import { UpdateSurveyQuestionDto } from './dto/update-survey-question.dto';
+import {
+  EstimatedDurationFilter,
+  ListSurveysQueryDto,
+} from './dto/list-surveys-query.dto';
+import { MoveToTeamDto } from './dto/move-to-team.dto';
+import { CopySurveyDto } from './dto/copy-survey.dto';
+import { PreviewResponseDto } from './dto/preview-response.dto';
+import {
+  SurveyResponseDto,
+  SurveyWithQuestions,
+} from './dto/survey-response.dto';
+import { SurveyListItemResponseDto } from './dto/survey-list-item-response.dto';
+import { SurveyDetailResponseDto } from './dto/survey-detail-response.dto';
+import { validatePublishableSurvey } from './survey-publish.validator';
+import { decodeSurveyCursor, encodeSurveyCursor } from './survey-cursor.util';
+import {
+  SCALE_MAX,
+  SCALE_MIN,
+  SURVEY_LIST_DEFAULT_LIMIT,
+} from './survey.constants';
+
+const SURVEY_WITH_QUESTIONS_INCLUDE = {
+  questions: { include: { options: true } },
+} satisfies Prisma.SurveyInclude;
 
 @Injectable()
 export class SurveyService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly teamService: TeamService,
+  ) {}
+
+  // Spec 3.2: 작성 공간으로 "내 설문" 또는 소속 팀을 고른다. 팀을 고르면 현재
+  // 팀원인지 확인한다(Team 모듈의 멤버십 검증을 그대로 재사용).
+  async createDraft(
+    userId: string,
+    dto: CreateSurveyDraftDto,
+  ): Promise<SurveyResponseDto> {
+    const isTeamDraft = dto.ownerType === 'team';
+    if (isTeamDraft) {
+      await this.teamService.assertActiveMembership(dto.teamId!, userId);
+    }
+
+    const survey = await this.prisma.survey.create({
+      data: {
+        ownerType: isTeamDraft ? SurveyOwnerType.TEAM : SurveyOwnerType.USER,
+        ownerId: isTeamDraft ? dto.teamId! : userId,
+        creatorId: userId,
+        title: dto.title,
+        description: dto.description,
+        category: dto.category,
+        estimatedMinutes: dto.estimatedMinutes,
+        status: SurveyStatus.DRAFT,
+      },
+      include: SURVEY_WITH_QUESTIONS_INCLUDE,
+    });
+    // 방금 만든 초안이므로 개인 초안이면 항상 본인, 팀 초안이면 방금 확인한
+    // assertActiveMembership과 별개로 팀장 여부를 다시 조회해 판단한다.
+    const canManage = await this.resolveCanManageForOne(survey, userId);
+    const canDelete = await this.computeCanDeleteForOne(survey, userId);
+    return new SurveyResponseDto(survey, canManage, canDelete);
+  }
+
+  async getDraft(userId: string, surveyId: string): Promise<SurveyResponseDto> {
+    const survey = await this.findAccessibleSurveyOrThrow(userId, surveyId);
+    const canManage = await this.resolveCanManageForOne(survey, userId);
+    const canDelete = await this.computeCanDeleteForOne(survey, userId);
+    return new SurveyResponseDto(survey, canManage, canDelete);
+  }
+
+  // Spec 4.1: 낙관적 락(version) + 문항 전체 교체 방식의 임시저장. 4.3의
+  // 글자 수·개수 규칙은 게시 시점에만 검사한다(미완성 저장 허용).
+  async updateDraft(
+    userId: string,
+    surveyId: string,
+    dto: UpdateSurveyDraftDto,
+  ): Promise<SurveyResponseDto> {
+    const current = await this.findAccessibleSurveyOrThrow(userId, surveyId);
+    if (current.status !== SurveyStatus.DRAFT) {
+      throw new SurveyNotDraftException();
+    }
+
+    const data: Prisma.SurveyUpdateInput = { version: { increment: 1 } };
+    if (dto.title !== undefined) data.title = dto.title;
+    if (dto.description !== undefined) data.description = dto.description;
+    if (dto.category !== undefined) data.category = dto.category;
+    if (dto.estimatedMinutes !== undefined)
+      data.estimatedMinutes = dto.estimatedMinutes;
+    if (dto.targetCount !== undefined) data.targetCount = dto.targetCount;
+    if (dto.deadlineDate !== undefined) {
+      data.deadlineAt =
+        dto.deadlineDate === null
+          ? null
+          : kstDateStringToUtcEndOfDay(dto.deadlineDate);
+    }
+
+    const existingStableKeys = new Set(
+      current.questions.map((q) => q.stableKey),
+    );
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.survey.updateMany({
+        where: { id: surveyId, version: dto.version },
+        data,
+      });
+      if (count === 0) {
+        return null;
+      }
+
+      if (dto.questions !== undefined) {
+        await this.replaceSurveyQuestions(
+          tx,
+          surveyId,
+          dto.questions,
+          existingStableKeys,
+        );
+      }
+
+      return tx.survey.findUniqueOrThrow({
+        where: { id: surveyId },
+        include: SURVEY_WITH_QUESTIONS_INCLUDE,
+      });
+    });
+
+    if (!updated) {
+      const latest = await this.prisma.survey.findUniqueOrThrow({
+        where: { id: surveyId },
+        include: SURVEY_WITH_QUESTIONS_INCLUDE,
+      });
+      const canManage = await this.resolveCanManageForOne(latest, userId);
+      const canDelete = await this.computeCanDeleteForOne(latest, userId);
+      throw new SurveyVersionConflictException(
+        new SurveyResponseDto(latest, canManage, canDelete),
+      );
+    }
+
+    const canManage = await this.resolveCanManageForOne(updated, userId);
+    const canDelete = await this.computeCanDeleteForOne(updated, userId);
+    return new SurveyResponseDto(updated, canManage, canDelete);
+  }
+
+  // Spec 3.1: "팀 초안 삭제는 팀장 또는 만든 사람만." USER 초안은 기존 그대로
+  // 작성자 본인만. 팀 초안이 아예 안 보이는 것(비팀원)과 팀원이지만 권한이
+  // 없는 것(팀장도 만든 사람도 아님)은 구분한다 — 전자는 findAccessibleSurveyOrThrow가
+  // 그대로 403/404로 걸러주고, 후자만 여기서 별도로 거부한다.
+  async deleteDraft(userId: string, surveyId: string): Promise<void> {
+    const survey = await this.findAccessibleSurveyOrThrow(userId, surveyId);
+
+    if (survey.ownerType === SurveyOwnerType.TEAM) {
+      const isCreator = survey.creatorId === userId;
+      const isLeader = await this.teamService.isTeamLeader(
+        survey.ownerId,
+        userId,
+      );
+      if (!isCreator && !isLeader) {
+        throw new TeamDraftDeleteForbiddenException();
+      }
+    }
+
+    if (survey.status !== SurveyStatus.DRAFT) {
+      throw new SurveyNotDraftException();
+    }
+    await this.prisma.survey.delete({ where: { id: surveyId } });
+  }
+
+  // Spec 4.5: 게시는 4.3 규칙을 전부 검사한 뒤 상태를 RECRUITING으로 바꾼다.
+  // "같은 게시 요청이 반복되어도 설문은 하나만 만든다" — DRAFT 조건부
+  // update로 원자적으로 처리하고, 이미 게시된 상태면 그 결과를 그대로 반환한다.
+  async publish(userId: string, surveyId: string): Promise<SurveyResponseDto> {
+    // Spec 4.5 step 1: 게시 가능 여부의 첫 조건인 "계정이 활성인지" 확인.
+    const account = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+    if (!account || account.status !== UserStatus.ACTIVE) {
+      throw new AccountNotActiveException();
+    }
+
+    const survey = await this.findAccessibleSurveyOrThrow(userId, surveyId);
+
+    if (survey.status === SurveyStatus.RECRUITING) {
+      const canManage = await this.resolveCanManageForOne(survey, userId);
+      const canDelete = await this.computeCanDeleteForOne(survey, userId);
+      return new SurveyResponseDto(survey, canManage, canDelete);
+    }
+    if (survey.status !== SurveyStatus.DRAFT) {
+      throw new SurveyNotDraftException();
+    }
+
+    const errors = validatePublishableSurvey(survey);
+    if (errors.length > 0) {
+      throw new BadRequestException(errors);
+    }
+
+    const { count } = await this.prisma.survey.updateMany({
+      where: { id: surveyId, status: SurveyStatus.DRAFT },
+      data: {
+        status: SurveyStatus.RECRUITING,
+        publishedAt: new Date(),
+        version: { increment: 1 },
+      },
+    });
+
+    const published = await this.prisma.survey.findUniqueOrThrow({
+      where: { id: surveyId },
+      include: SURVEY_WITH_QUESTIONS_INCLUDE,
+    });
+
+    if (count === 0 && published.status !== SurveyStatus.RECRUITING) {
+      throw new SurveyNotDraftException();
+    }
+
+    if (count > 0) {
+      // Spec 8.5 / 12.3⑨: Dashboard "최근 활동" 피드가 재사용하는 알림 기록 —
+      // 게시자 본인 앞으로 한 건 남긴다. (기찬 도메인 요청으로 추가, 2026-09-25)
+      await this.prisma.notification.create({
+        data: {
+          userId,
+          type: NotificationType.SURVEY_PUBLISHED,
+          message: `"${published.title}" 설문을 게시했습니다.`,
+          targetUrl: `/surveys/${surveyId}`,
+        },
+      });
+    }
+
+    const canManage = await this.resolveCanManageForOne(published, userId);
+    const canDelete = await this.computeCanDeleteForOne(published, userId);
+    return new SurveyResponseDto(published, canManage, canDelete);
+  }
+
+  // Spec 5.2: 모집 중인 설문만 게시 시각 최신순(동률이면 id 내림차순)으로.
+  async listRecruiting(
+    viewerId: string,
+    query: ListSurveysQueryDto,
+  ): Promise<{
+    items: SurveyListItemResponseDto[];
+    nextCursor: string | null;
+  }> {
+    const limit = query.limit ?? SURVEY_LIST_DEFAULT_LIMIT;
+    // Spec 3.3: 팀 초안을 게시하면 팀 설문이 되고, 팀 이름으로 이 목록에도 나온다.
+    const where: Prisma.SurveyWhereInput = {
+      status: SurveyStatus.RECRUITING,
+    };
+
+    if (query.category) {
+      where.category = query.category;
+    }
+    if (query.estimatedDuration) {
+      where.estimatedMinutes = this.buildEstimatedMinutesFilter(
+        query.estimatedDuration,
+      );
+    }
+
+    if (query.cursor) {
+      const cursor = decodeSurveyCursor(query.cursor);
+      where.OR = [
+        { publishedAt: { lt: cursor.publishedAt } },
+        { publishedAt: cursor.publishedAt, id: { lt: cursor.id } },
+      ];
+    }
+
+    const rows = await this.prisma.survey.findMany({
+      where,
+      orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      include: { _count: { select: { questions: true } } },
+    });
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+
+    const { displayNameByOwnerId, teamLeaderIdByTeamId } =
+      await this.resolveOwnerInfo(page);
+
+    const items = page.map(
+      (survey) =>
+        new SurveyListItemResponseDto(
+          survey,
+          displayNameByOwnerId.get(survey.ownerId) ?? null,
+          viewerId,
+          this.computeCanManage(survey, viewerId, teamLeaderIdByTeamId),
+        ),
+    );
+
+    const last = page.at(-1);
+    const nextCursor =
+      hasMore && last?.publishedAt
+        ? encodeSurveyCursor({ publishedAt: last.publishedAt, id: last.id })
+        : null;
+
+    return { items, nextCursor };
+  }
+
+  // Spec 5.1: 임시저장은 작성자(팀 초안은 현재 팀원)만, 운영 삭제는 누구에게도
+  // 보이지 않는다. 모집 중 이후 상태는 팀 설문이어도 누구나 볼 수 있다(3.3).
+  async getDetail(
+    viewerId: string,
+    surveyId: string,
+  ): Promise<SurveyDetailResponseDto> {
+    const survey = await this.prisma.survey.findUnique({
+      where: { id: surveyId },
+      include: SURVEY_WITH_QUESTIONS_INCLUDE,
+    });
+
+    if (!survey || survey.status === SurveyStatus.REMOVED) {
+      throw new NotFoundException('설문을 찾을 수 없습니다.');
+    }
+
+    if (survey.status === SurveyStatus.DRAFT) {
+      if (survey.ownerType === SurveyOwnerType.USER) {
+        if (survey.ownerId !== viewerId) {
+          throw new NotFoundException('설문을 찾을 수 없습니다.');
+        }
+      } else {
+        await this.teamService.assertActiveMembership(survey.ownerId, viewerId);
+      }
+    }
+
+    const { displayNameByOwnerId, teamLeaderIdByTeamId } =
+      await this.resolveOwnerInfo([survey]);
+
+    return new SurveyDetailResponseDto(
+      survey,
+      displayNameByOwnerId.get(survey.ownerId) ?? null,
+      viewerId,
+      this.computeCanManage(survey, viewerId, teamLeaderIdByTeamId),
+      this.computeCanDelete(survey, viewerId, teamLeaderIdByTeamId),
+    );
+  }
+
+  // Spec 3.2: "내 초안도 게시 전이면 팀 초안으로 옮길 수 있다(팀 초안을 개인으로
+  // 되돌리기는 불가)" — 이동 대상은 반드시 내가 만든 개인 초안이어야 하므로
+  // findOwnedSurveyOrThrow(USER 전용)를 그대로 쓴다. 이미 팀 초안인 설문은 여기서
+  // 걸리지 않고 자연히 404가 된다(개인 소유가 아니므로).
+  async moveToTeam(
+    userId: string,
+    surveyId: string,
+    dto: MoveToTeamDto,
+  ): Promise<{ success: true }> {
+    const survey = await this.findOwnedSurveyOrThrow(userId, surveyId);
+    if (survey.status !== SurveyStatus.DRAFT) {
+      throw new SurveyNotDraftException();
+    }
+    await this.teamService.assertActiveMembership(dto.teamId, userId);
+
+    // creatorId is left untouched on purpose: findOwnedSurveyOrThrow already
+    // guarantees survey.ownerId === userId for a USER-owned draft, and
+    // createDraft always sets creatorId to that same userId, so it's already
+    // correct after the move.
+    await this.prisma.survey.update({
+      where: { id: surveyId },
+      data: {
+        ownerType: SurveyOwnerType.TEAM,
+        ownerId: dto.teamId,
+        version: { increment: 1 },
+      },
+    });
+
+    return { success: true };
+  }
+
+  // Spec 4.1: "본인 설문 또는 소속 팀 설문의 제목·설명·문항·보기·문항 설정을 복사해
+  // 같은 작성 공간에 새 초안을 만든다. 응답은 가져오지 않는다." 목표 인원·마감일은
+  // 나열되지 않은 항목이라 복사하지 않는다 — 복사의 대표 용도가 "게시 후 바뀌지
+  // 않는 목표/마감일을 바꾸려고 새로 게시"하는 것이기도 하다(4.5). category·
+  // estimatedMinutes는 targetCount/deadlineAt과 달리 게시 후에도 자유롭게
+  // 바꿀 수 있는 표시 속성이라 이 제외 이유가 적용되지 않으므로 그대로 복사한다.
+
+  async copySurvey(
+    userId: string,
+    surveyId: string,
+    dto: CopySurveyDto,
+  ): Promise<{ newSurveyId: string }> {
+    const source = await this.findAccessibleSurveyOrThrow(userId, surveyId);
+
+    const isTeamTarget = dto.targetOwnerType === 'team';
+    if (isTeamTarget) {
+      await this.teamService.assertActiveMembership(dto.teamId!, userId);
+    }
+
+    const created = await this.prisma.survey.create({
+      data: {
+        ownerType: isTeamTarget ? SurveyOwnerType.TEAM : SurveyOwnerType.USER,
+        ownerId: isTeamTarget ? dto.teamId! : userId,
+        // 복사는 새 초안을 "만드는" 행위이므로 원본의 creatorId를 물려받지 않고
+        // 복사를 실행한 사람을 만든 사람으로 기록한다.
+        creatorId: userId,
+        title: source.title,
+        description: source.description,
+        category: source.category,
+        estimatedMinutes: source.estimatedMinutes,
+        status: SurveyStatus.DRAFT,
+        questions: {
+          create: source.questions.map((question) => ({
+            orderNo: question.orderNo,
+            stableKey: randomUUID(),
+            type: question.type,
+            questionText: question.questionText,
+            required: question.required,
+            minSelect: question.minSelect,
+            maxSelect: question.maxSelect,
+            minScale: question.minScale,
+            maxScale: question.maxScale,
+            minScaleLabel: question.minScaleLabel,
+            maxScaleLabel: question.maxScaleLabel,
+            options: question.options.length
+              ? {
+                  create: question.options.map((option) => ({
+                    orderNo: option.orderNo,
+                    label: option.label,
+                    isEtc: option.isEtc,
+                  })),
+                }
+              : undefined,
+          })),
+        },
+      },
+    });
+
+    return { newSurveyId: created.id };
+  }
+
+  // Spec 4.1 "게시 전 확인": 실제 제출 검증 로직(Response 도메인)을 그대로 재사용해
+  // 집계·점수에 반영되지 않는 시험 응답을 검사한다. Response 테이블에는 아무 것도
+  // 쓰지 않는다.
+  async previewResponse(
+    userId: string,
+    surveyId: string,
+    dto: PreviewResponseDto,
+  ): Promise<{ valid: boolean; errors: string[] }> {
+    const survey = await this.findAccessibleSurveyOrThrow(userId, surveyId);
+    if (survey.status !== SurveyStatus.DRAFT) {
+      throw new SurveyNotDraftException();
+    }
+
+    const errors = validateSubmittedAnswers(survey, dto.answers);
+    return { valid: errors.length === 0, errors };
+  }
+
+  private async findOwnedSurveyOrThrow(
+    userId: string,
+    surveyId: string,
+  ): Promise<SurveyWithQuestions> {
+    const survey = await this.prisma.survey.findUnique({
+      where: { id: surveyId },
+      include: SURVEY_WITH_QUESTIONS_INCLUDE,
+    });
+    if (
+      !survey ||
+      survey.ownerType !== SurveyOwnerType.USER ||
+      survey.ownerId !== userId
+    ) {
+      throw new NotFoundException('설문을 찾을 수 없습니다.');
+    }
+    return survey;
+  }
+
+  // Spec 3.2/4.1: 개인 초안은 작성자만, 팀 초안은 현재 팀원만 조회·수정할 수 있다.
+  //
+  // (2026-09-27 수정) 팀 분기는 원래 teamService.assertActiveMembership만
+  // 썼는데, 이건 팀이 해산되면(disbandedAt 존재) 무조건 404를 던진다. DRAFT
+  // 상태 팀 설문은 해산 시 이미 개인 초안으로 이관되니 이 메서드의 원래
+  // 의도(초안 조회/수정) 안에서는 문제가 없었지만, copySurvey는 이 메서드를
+  // "원본" 조회에도 그대로 써서 RECRUITING 이후 상태의 팀 설문(해산 후에도
+  // 팀 소유로 남는 것 — team.service.ts disbandTeam 참고)을 복사하려 할 때도
+  // 404가 났다. result.service.ts assertCanView와 같은 이유로, 팀이
+  // 해산됐어도 해산 당시 팀장이면 접근을 허용하도록 그 경우만 raw 쿼리로
+  // 따로 처리한다(팀이 아직 살아있을 때의 "현재 팀원만" 규칙은 그대로 둔다).
+  private async findAccessibleSurveyOrThrow(
+    userId: string,
+    surveyId: string,
+  ): Promise<SurveyWithQuestions> {
+    const survey = await this.prisma.survey.findUnique({
+      where: { id: surveyId },
+      include: SURVEY_WITH_QUESTIONS_INCLUDE,
+    });
+    if (!survey) {
+      throw new NotFoundException('설문을 찾을 수 없습니다.');
+    }
+
+    if (survey.ownerType === SurveyOwnerType.USER) {
+      if (survey.ownerId !== userId) {
+        throw new NotFoundException('설문을 찾을 수 없습니다.');
+      }
+      return survey;
+    }
+
+    const team = await this.prisma.team.findUnique({
+      where: { id: survey.ownerId },
+      select: { leaderId: true, disbandedAt: true },
+    });
+
+    if (team && !team.disbandedAt) {
+      const membership = await this.prisma.teamMember.findUnique({
+        where: { teamId_userId: { teamId: survey.ownerId, userId } },
+      });
+      if (!membership) {
+        throw new NotTeamMemberException();
+      }
+    } else if (!team || team.leaderId !== userId) {
+      throw new NotFoundException('설문을 찾을 수 없습니다.');
+    }
+
+    return survey;
+  }
+
+  // FormMate 연동: updateDraft와 완전히 같은 접근 권한 기준(개인 초안 작성자 /
+  // 팀 초안 현재 팀원)을 다른 서비스(FormMateService)에서도 그대로 쓰기 위한
+  // 공개 진입점. private 헬퍼 이름을 바꾸지 않고 얇게 감싼다.
+  async getAccessibleSurveyOrThrow(
+    userId: string,
+    surveyId: string,
+  ): Promise<SurveyWithQuestions> {
+    return this.findAccessibleSurveyOrThrow(userId, surveyId);
+  }
+
+  // updateDraft가 쓰던 "문항 전체 교체" 로직을 그대로 뽑아낸 것 — FormMate의
+  // apply/revert도 같은 방식(전체 목록을 새로 계산해 통째로 교체)으로 반영한다.
+  // tx를 파라미터로 받으므로 호출자의 트랜잭션 안에서 그대로 실행된다.
+  async replaceSurveyQuestions(
+    tx: Prisma.TransactionClient,
+    surveyId: string,
+    questions: UpdateSurveyQuestionDto[],
+    existingStableKeys: Set<string>,
+  ): Promise<void> {
+    for (const question of questions) {
+      if (question.id && !existingStableKeys.has(question.id)) {
+        throw new BadRequestException(
+          `존재하지 않는 문항 id입니다: ${question.id}`,
+        );
+      }
+    }
+
+    await tx.surveyQuestion.deleteMany({ where: { surveyId } });
+
+    const isChoiceType = (type: SurveyQuestionType) =>
+      type === SurveyQuestionType.SINGLE_CHOICE ||
+      type === SurveyQuestionType.MULTI_CHOICE;
+
+    for (const [index, question] of questions.entries()) {
+      await tx.surveyQuestion.create({
+        data: {
+          surveyId,
+          orderNo: index + 1,
+          stableKey: question.id ?? randomUUID(),
+          type: question.type,
+          questionText: question.questionText,
+          required: question.required ?? true,
+          minSelect:
+            question.type === SurveyQuestionType.MULTI_CHOICE
+              ? (question.minSelect ?? null)
+              : null,
+          maxSelect:
+            question.type === SurveyQuestionType.MULTI_CHOICE
+              ? (question.maxSelect ?? null)
+              : null,
+          minScale:
+            question.type === SurveyQuestionType.SCALE ? SCALE_MIN : null,
+          maxScale:
+            question.type === SurveyQuestionType.SCALE ? SCALE_MAX : null,
+          minScaleLabel:
+            question.type === SurveyQuestionType.SCALE
+              ? (question.minScaleLabel ?? null)
+              : null,
+          maxScaleLabel:
+            question.type === SurveyQuestionType.SCALE
+              ? (question.maxScaleLabel ?? null)
+              : null,
+          options:
+            isChoiceType(question.type) && question.options
+              ? {
+                  create: question.options.map((option, optionIndex) => ({
+                    orderNo: optionIndex + 1,
+                    label: option.label,
+                    isEtc:
+                      question.type === SurveyQuestionType.SINGLE_CHOICE
+                        ? (option.isEtc ?? false)
+                        : false,
+                  })),
+                }
+              : undefined,
+        },
+      });
+    }
+  }
+
+  // Spec 3.3: 목록·상세에서 USER는 등록자 닉네임, TEAM은 팀 이름으로 표시한다.
+  // canManage(팀장 판단) 계산도 여기서 같은 팀 조회에 얹어 배치 처리한다 —
+  // TeamService.isTeamLeader/assertActiveMembership은 해산된 팀이면 던지므로
+  // (findActiveTeamOrThrow), 표시용 읽기 전용 계산에는 쓰지 않고 직접 조회한다.
+  private async resolveOwnerInfo(
+    surveys: { ownerType: SurveyOwnerType; ownerId: string }[],
+  ): Promise<{
+    displayNameByOwnerId: Map<string, string | null>;
+    teamLeaderIdByTeamId: Map<string, string>;
+  }> {
+    const userOwnerIds = [
+      ...new Set(
+        surveys
+          .filter((s) => s.ownerType === SurveyOwnerType.USER)
+          .map((s) => s.ownerId),
+      ),
+    ];
+    const teamOwnerIds = [
+      ...new Set(
+        surveys
+          .filter((s) => s.ownerType === SurveyOwnerType.TEAM)
+          .map((s) => s.ownerId),
+      ),
+    ];
+
+    const owners: { id: string; nickname: string | null }[] =
+      userOwnerIds.length
+        ? await this.prisma.user.findMany({
+            where: { id: { in: userOwnerIds } },
+            select: { id: true, nickname: true },
+          })
+        : [];
+    const teams: { id: string; name: string; leaderId: string }[] =
+      teamOwnerIds.length
+        ? await this.prisma.team.findMany({
+            where: { id: { in: teamOwnerIds } },
+            select: { id: true, name: true, leaderId: true },
+          })
+        : [];
+
+    const entries: [string, string | null][] = [
+      ...owners.map((owner): [string, string | null] => [
+        owner.id,
+        owner.nickname,
+      ]),
+      ...teams.map((team): [string, string | null] => [team.id, team.name]),
+    ];
+
+    return {
+      displayNameByOwnerId: new Map<string, string | null>(entries),
+      teamLeaderIdByTeamId: new Map(
+        teams.map((team) => [team.id, team.leaderId]),
+      ),
+    };
+  }
+
+  // Spec 5.2: "3분 이내/5분 이내/6분 이상" 버킷. estimatedMinutes가 null인
+  // 설문은 lte/gte 비교가 SQL에서 자연히 false가 되어 어떤 구간에도 안 잡힌다.
+  private buildEstimatedMinutesFilter(
+    filter: EstimatedDurationFilter,
+  ): Prisma.IntFilter {
+    switch (filter) {
+      case EstimatedDurationFilter.UNDER_3:
+        return { lte: 3 };
+      case EstimatedDurationFilter.UNDER_5:
+        return { lte: 5 };
+      case EstimatedDurationFilter.OVER_6:
+        return { gte: 6 };
+    }
+  }
+
+  private computeCanManage(
+    survey: { ownerType: SurveyOwnerType; ownerId: string },
+    viewerId: string,
+    teamLeaderIdByTeamId: Map<string, string>,
+  ): boolean {
+    if (survey.ownerType === SurveyOwnerType.USER) {
+      return survey.ownerId === viewerId;
+    }
+    return teamLeaderIdByTeamId.get(survey.ownerId) === viewerId;
+  }
+
+  // 단일 설문 응답(createDraft/getDraft/updateDraft/publish)에서 쓰는 편의
+  // 래퍼 — 배치용 resolveOwnerInfo/computeCanManage를 그대로 재사용한다.
+  private async resolveCanManageForOne(
+    survey: { ownerType: SurveyOwnerType; ownerId: string },
+    viewerId: string,
+  ): Promise<boolean> {
+    const { teamLeaderIdByTeamId } = await this.resolveOwnerInfo([survey]);
+    return this.computeCanManage(survey, viewerId, teamLeaderIdByTeamId);
+  }
+
+  // FormMate 연동: SurveyResponseDto를 만드는 다른 서비스(FormMateService)도
+  // canManage를 같은 기준으로 계산하기 위한 공개 진입점 — getAccessibleSurveyOrThrow와
+  // 같은 패턴.
+  async resolveCanManage(
+    survey: { ownerType: SurveyOwnerType; ownerId: string },
+    userId: string,
+  ): Promise<boolean> {
+    return this.resolveCanManageForOne(survey, userId);
+  }
+
+  // FormMate 연동: resolveCanManage와 같은 이유로 canDelete도 공개 진입점을 둔다.
+  async resolveCanDelete(
+    survey: {
+      status: SurveyStatus;
+      ownerType: SurveyOwnerType;
+      ownerId: string;
+      creatorId: string;
+    },
+    userId: string,
+  ): Promise<boolean> {
+    return this.computeCanDeleteForOne(survey, userId);
+  }
+
+  // I5: deleteDraft의 실제 삭제 권한 규칙(DRAFT 상태 + (USER는 본인, TEAM은
+  // 만든 사람 또는 팀장))을 응답 필드용으로 다시 표현한 것 — deleteDraft
+  // 자체를 이걸 쓰도록 리팩터링하지는 않았다. deleteDraft는 "권한 없음(403)"과
+  // "이미 DRAFT가 아님(409)"을 구분해서 던져야 하는데, 이 헬퍼는 표시용으로
+  // 두 조건을 하나의 boolean으로 합친 것이라 그대로 재사용하면 그 구분이
+  // 사라진다. 같은 규칙을 두 곳에 따로 적어두는 대신, deleteDraft를 건드리는
+  // 것보다 이미 동작 중인 예외 흐름을 그대로 두는 쪽이 안전하다고 판단했다.
+  private computeCanDelete(
+    survey: {
+      status: SurveyStatus;
+      ownerType: SurveyOwnerType;
+      ownerId: string;
+      creatorId: string;
+    },
+    viewerId: string,
+    teamLeaderIdByTeamId: Map<string, string>,
+  ): boolean {
+    if (survey.status !== SurveyStatus.DRAFT) {
+      return false;
+    }
+    if (survey.ownerType === SurveyOwnerType.USER) {
+      return survey.ownerId === viewerId;
+    }
+    return (
+      survey.creatorId === viewerId ||
+      teamLeaderIdByTeamId.get(survey.ownerId) === viewerId
+    );
+  }
+
+  private async computeCanDeleteForOne(
+    survey: {
+      status: SurveyStatus;
+      ownerType: SurveyOwnerType;
+      ownerId: string;
+      creatorId: string;
+    },
+    viewerId: string,
+  ): Promise<boolean> {
+    const { teamLeaderIdByTeamId } = await this.resolveOwnerInfo([survey]);
+    return this.computeCanDelete(survey, viewerId, teamLeaderIdByTeamId);
+  }
 }

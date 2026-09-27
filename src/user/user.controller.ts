@@ -1,7 +1,82 @@
-import { Controller } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  NotFoundException,
+  Patch,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { UserStatus } from '@prisma/client';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/types/jwt-payload.type';
 import { UserService } from './user.service';
+import { UserResponseDto } from './dto/user-response.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateMarketingOptInDto } from './dto/update-marketing-opt-in.dto';
 
+@ApiTags('User')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
 @Controller('users')
 export class UserController {
   constructor(private readonly userService: UserService) {}
+
+  @Get('me')
+  async getMe(@CurrentUser() jwtUser: JwtPayload): Promise<UserResponseDto> {
+    const user = await this.userService.findById(jwtUser.sub);
+    if (!user) {
+      throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    }
+    const restriction =
+      user.status === UserStatus.RESTRICTED
+        ? await this.userService.findActiveRestriction(user.id)
+        : null;
+    return new UserResponseDto(user, restriction);
+  }
+
+  @Patch('me')
+  async updateProfile(
+    @CurrentUser() jwtUser: JwtPayload,
+    @Body() dto: UpdateProfileDto,
+  ): Promise<UserResponseDto> {
+    const user = await this.userService.updateProfile(jwtUser.sub, dto);
+    return new UserResponseDto(user);
+  }
+
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Patch('me/password')
+  async changePassword(
+    @CurrentUser() jwtUser: JwtPayload,
+    @Body() dto: ChangePasswordDto,
+  ): Promise<void> {
+    await this.userService.changePassword(
+      jwtUser.sub,
+      dto.currentPassword,
+      dto.newPassword,
+    );
+  }
+
+  @Patch('me/marketing-opt-in')
+  async updateMarketingOptIn(
+    @CurrentUser() jwtUser: JwtPayload,
+    @Body() dto: UpdateMarketingOptInDto,
+  ): Promise<UserResponseDto> {
+    const user = await this.userService.updateMarketingOptIn(
+      jwtUser.sub,
+      dto.marketingOptIn,
+    );
+    return new UserResponseDto(user);
+  }
+
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Delete('me')
+  async withdraw(@CurrentUser() jwtUser: JwtPayload): Promise<void> {
+    await this.userService.withdraw(jwtUser.sub);
+  }
 }

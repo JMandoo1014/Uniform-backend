@@ -5,6 +5,13 @@ import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { TeamModule } from './team/team.module';
 import { SurveyModule } from './survey/survey.module';
+import { ResponseModule } from './response/response.module';
+import { LeaderboardModule } from './leaderboard/leaderboard.module';
+import { ResultModule } from './result/result.module';
+import { MypageModule } from './mypage/mypage.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { SupportModule } from './support/support.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -14,6 +21,13 @@ import { SurveyModule } from './survey/survey.module';
     UserModule,
     TeamModule,
     SurveyModule,
+    ResponseModule,
+    LeaderboardModule,
+    ResultModule,
+    MypageModule,
+    DashboardModule,
+    SupportModule,
+    AdminModule,
   ],
 })
 export class AppModule {}
