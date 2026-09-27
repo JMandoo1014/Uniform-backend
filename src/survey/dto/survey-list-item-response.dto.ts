@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, SurveyOwnerType } from '@prisma/client';
 
 export type SurveyListItem = Prisma.SurveyGetPayload<{
   include: { _count: { select: { questions: true } } };
@@ -15,6 +15,10 @@ export class SurveyListItemResponseDto {
   ownerType: SurveyListItem['ownerType'];
   // Spec 3.3: 팀 설문은 목록에 팀 이름으로 표시한다 — USER는 등록자 닉네임.
   ownerNickname: string | null;
+  // I4: 프론트가 팀 이름으로 그룹핑하던 걸(같은 이름의 팀이 여럿이면 깨짐)
+  // 실제 id 기준으로 바꿀 수 있도록 추가. TEAM이면 ownerId(팀 id) 그대로,
+  // USER면 null.
+  teamId: string | null;
   questionCount: number;
   category: string | null;
   estimatedMinutes: number | null;
@@ -37,6 +41,8 @@ export class SurveyListItemResponseDto {
     this.title = survey.title;
     this.ownerType = survey.ownerType;
     this.ownerNickname = ownerNickname;
+    this.teamId =
+      survey.ownerType === SurveyOwnerType.TEAM ? survey.ownerId : null;
     this.questionCount = survey._count.questions;
     this.category = survey.category;
     this.estimatedMinutes = survey.estimatedMinutes;

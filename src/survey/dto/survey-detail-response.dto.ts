@@ -1,3 +1,4 @@
+import { SurveyOwnerType } from '@prisma/client';
 import {
   SurveyQuestionResponseDto,
   SurveyWithQuestions,
@@ -12,6 +13,9 @@ export class SurveyDetailResponseDto {
   ownerType: SurveyWithQuestions['ownerType'];
   // Spec 3.3: 팀 설문은 팀 이름으로 표시한다 — USER는 등록자 닉네임.
   ownerNickname: string | null;
+  // I4: 이름 기준 그룹핑(같은 이름 팀이 여럿이면 깨짐) 대신 쓸 수 있는 실제
+  // 팀 id. TEAM이면 ownerId 그대로, USER면 null.
+  teamId: string | null;
   status: SurveyWithQuestions['status'];
   category: string | null;
   estimatedMinutes: number | null;
@@ -24,6 +28,10 @@ export class SurveyDetailResponseDto {
   // 팀장에게 관리 권한이 남는 spec 3.4 규칙과 맞물린다). 프론트가 이 필드
   // 하나로 "관리 버튼을 보여줄지"를 판단할 수 있도록 추가한다.
   canManage: boolean;
+  // I5: survey.service.ts deleteDraft의 실제 삭제 권한 로직(DRAFT 상태 +
+  // (USER는 본인, TEAM은 만든 사람 또는 팀장))을 그대로 계산해 내려준다 —
+  // 프론트가 이 조건을 자체 추론하다 실제 백엔드 판단과 어긋나는 걸 막는다.
+  canDelete: boolean;
   questions: SurveyQuestionResponseDto[];
 
   constructor(
@@ -31,12 +39,15 @@ export class SurveyDetailResponseDto {
     ownerNickname: string | null,
     viewerId: string,
     canManage: boolean,
+    canDelete: boolean,
   ) {
     this.id = survey.id;
     this.title = survey.title;
     this.description = survey.description;
     this.ownerType = survey.ownerType;
     this.ownerNickname = ownerNickname;
+    this.teamId =
+      survey.ownerType === SurveyOwnerType.TEAM ? survey.ownerId : null;
     this.status = survey.status;
     this.category = survey.category;
     this.estimatedMinutes = survey.estimatedMinutes;
@@ -45,6 +56,7 @@ export class SurveyDetailResponseDto {
     this.publishedAt = survey.publishedAt?.toISOString() ?? null;
     this.isOwner = survey.ownerId === viewerId;
     this.canManage = canManage;
+    this.canDelete = canDelete;
     this.questions = survey.questions
       .sort((a, b) => a.orderNo - b.orderNo)
       .map((question) => new SurveyQuestionResponseDto(question));

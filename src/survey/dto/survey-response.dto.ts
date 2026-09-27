@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, SurveyOwnerType } from '@prisma/client';
 
 export type SurveyWithQuestions = Prisma.SurveyGetPayload<{
   include: { questions: { include: { options: true } } };
@@ -65,14 +65,23 @@ export class SurveyResponseDto {
   publishedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  // I4: 이름 기준 그룹핑 대신 쓸 수 있는 실제 팀 id. TEAM이면 ownerId
+  // 그대로, USER면 null.
+  teamId: string | null;
   // 팀 초안은 현재 팀원 누구나 조회·수정할 수 있지만(4.1) 관리(게시 이후
   // 마감/보관 등)는 팀장만 가능하다 — survey-detail-response.dto.ts와 같은
   // 정의의 canManage를 여기서도 내려줘 팀원 화면에서 "관리자 전용" 버튼을
   // 구분할 수 있게 한다.
   canManage: boolean;
+  // I5: survey.service.ts deleteDraft의 실제 삭제 권한 로직을 그대로 계산.
+  canDelete: boolean;
   questions: SurveyQuestionResponseDto[];
 
-  constructor(survey: SurveyWithQuestions, canManage: boolean) {
+  constructor(
+    survey: SurveyWithQuestions,
+    canManage: boolean,
+    canDelete: boolean,
+  ) {
     this.id = survey.id;
     this.title = survey.title;
     this.description = survey.description;
@@ -85,7 +94,10 @@ export class SurveyResponseDto {
     this.publishedAt = survey.publishedAt?.toISOString() ?? null;
     this.createdAt = survey.createdAt.toISOString();
     this.updatedAt = survey.updatedAt.toISOString();
+    this.teamId =
+      survey.ownerType === SurveyOwnerType.TEAM ? survey.ownerId : null;
     this.canManage = canManage;
+    this.canDelete = canDelete;
     this.questions = survey.questions
       .sort((a, b) => a.orderNo - b.orderNo)
       .map((question) => new SurveyQuestionResponseDto(question));
