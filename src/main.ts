@@ -5,18 +5,22 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { parseCorsOrigin } from './common/utils/cors-origin.util';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   // 프론트(Vite dev server 등 다른 origin)에서 API를 직접 호출할 수 있도록 허용.
-  // CORS_ORIGIN을 쉼표로 구분해 지정하면 그 목록만 허용하고, 안 정해져 있으면
-  // 개발 편의를 위해 모든 origin을 허용한다(인증은 쿠키가 아니라 Authorization
-  // 헤더의 Bearer 토큰을 쓰므로 credentials는 필요 없다).
+  // CORS_ORIGIN을 쉼표로 구분해 여러 origin을 지정할 수 있고(프로덕션 도메인 +
+  // 팀원 로컬 dev server 등), "*"가 들어간 항목은 Cloudflare Pages 프리뷰
+  // 서브도메인(브랜치/커밋마다 달라짐)처럼 가변 서브도메인을 정규식으로
+  // 통째로 허용한다(parseCorsOrigin 참고). 안 정해져 있으면 개발 편의를 위해
+  // 모든 origin을 허용한다(인증은 쿠키가 아니라 Authorization 헤더의 Bearer
+  // 토큰을 쓰므로 credentials는 필요 없다).
   const configService = app.get(ConfigService);
   const corsOrigin = configService.get<string>('CORS_ORIGIN');
   app.enableCors({
-    origin: corsOrigin ? corsOrigin.split(',') : true,
+    origin: parseCorsOrigin(corsOrigin),
   });
 
   app.useGlobalPipes(
