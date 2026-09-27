@@ -107,6 +107,7 @@ enum NotificationType {
   // (다른 팀원에게 가는 알림)와 달리 행위자 본인에게만 쌓인다.
   RESPONSE_SUBMITTED
   SURVEY_PUBLISHED
+  TEAM_NAME_FORCED
 }
 
 model User {
@@ -123,6 +124,9 @@ model User {
   agreedTermsVersion String
   // Spec 10.1: admin accounts are granted by the dev team, not self-service signup.
   isAdmin            Boolean           @default(false)
+  // Spec 6.3/11: 운영팀 구성원 계정은 리더보드에서 숨기고 보상 대상에서 뺀다.
+  // 관리자 콘솔의 "운영팀 지정"으로 켜고 끈다.
+  isStaff            Boolean           @default(false)
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
 
@@ -423,10 +427,14 @@ model LeaderboardScore {
 }
 
 // Singleton row (id fixed to "default"). Spec 6.3: reward is TBD, admin edits
-// the announcement text shown on the leaderboard instead of a hardcoded value.
+// the announcement shown on the leaderboard instead of a hardcoded value.
+// 관리자 콘솔의 보상 안내 화면(제목/설명/1~3위 보상/동점 규칙)과 같은 구조.
 model LeaderboardConfig {
   id               String   @id @default("default")
-  rewardText       String   @default("보상은 추후 공지")
+  title            String   @default("주간 보상 안내")
+  body             String   @default("보상은 추후 공지")
+  // 1~3위 보상 문구, 순서대로 [1위, 2위, 3위].
+  tiers            String[] @default([])
   tieRuleText      String   @default("동점자의 보상 대상자는 무작위 추첨으로 선정됩니다.")
   updatedAt        DateTime @updatedAt
   updatedByAdminId String?
@@ -446,21 +454,38 @@ model LeaderboardLottery {
   @@map("leaderboard_lotteries")
 }
 
-// Spec 6.3/10.4: reward send record, also what GET /mypage/coupons reads.
+// Spec 6.3/10.4: 주차별 보상 대상(정산 "대상 확정" 때 생성)과 순위별 발송 기록.
+// GET /mypage/coupons는 발송된(sentAt 있는) 행만 읽는다.
 model LeaderboardReward {
-  id            String   @id @default(uuid())
+  id            String    @id @default(uuid())
   userId        String
   weekStart     DateTime
+  // 보상 자리(spec 6.3 "1위 1명, 2위 1명, 3위 1명"). 동점자가 자리 안에 함께
+  // 들어오면 리더보드 정렬 순서대로 자리를 나눈다.
   rank          Int
-  couponType    String
-  sentAt        DateTime @default(now())
-  sentByAdminId String
+  // 관리자가 발송 기록 때 직접 입력한 보상 내용. 대상 확정 시점엔 비어 있다.
+  rewardText    String?   @map("couponType")
+  sentAt        DateTime?
+  sentByAdminId String?
+  createdAt     DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, weekStart])
+  @@unique([weekStart, rank])
   @@index([weekStart])
   @@map("leaderboard_rewards")
+}
+
+// 주차별 보상 정산 진행 단계(관리자 콘솔): 1 응답 확인 → 2 순위 확정 →
+// 3 동점 추첨 → 4 대상 확정 → 5 발송 기록. 행이 없으면 1단계다. 순위를
+// 확정한(3단계 이상) 주차의 응답은 더 이상 제외·점수 조정할 수 없다.
+model LeaderboardRewardWeek {
+  weekStart DateTime @id
+  step      Int      @default(1)
+  updatedAt DateTime @updatedAt
+
+  @@map("leaderboard_reward_weeks")
 }
 
 // ============================================================
@@ -488,19 +513,21 @@ model Notification {
 // ============================================================
 
 // Spec 10.1: "모든 조치는 조치자·시각·대상·사유와 함께 기록하고 지우지 않는다."
-// Catch-all audit trail for admin actions that don't already have a
-// structured home (survey removal/restore, forced nickname change). Actions
-// with richer structured data (restriction, lottery, reward send, score
-// revoke) live in their own tables above/below instead of duplicating here.
+// 관리자 콘솔의 조치 기록 화면이 읽는 단일 감사 로그 — 제한·추첨·보상 발송·
+// 응답 제외처럼 자기 테이블이 따로 있는 조치도 여기에 함께 남긴다.
 model AdminActionLog {
-  id         String   @id @default(uuid())
-  adminId    String
-  action     String
-  targetType String
-  targetId   String
-  reason     String?
-  memo       String?
-  createdAt  DateTime @default(now())
+  id          String   @id @default(uuid())
+  adminId     String
+  action      String
+  targetType  String
+  targetId    String
+  // 기록 당시 대상 이름(설문 제목·닉네임 등). 대상이 나중에 바뀌어도 그대로 둔다.
+  targetName  String?
+  reason      String?
+  memo        String?
+  beforeValue String?
+  afterValue  String?
+  createdAt   DateTime @default(now())
 
   admin User @relation("AdminActor", fields: [adminId], references: [id])
 

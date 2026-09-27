@@ -1,5 +1,11 @@
 import { User } from '@prisma/client';
 
+// 이용 제한 중(status RESTRICTED)인 회원의 현재 제한 — 이용 제한 안내 화면용.
+export class UserRestrictionInfoDto {
+  reason: string;
+  endsAt: string | null;
+}
+
 export class UserResponseDto {
   id: string;
   email: User['email'];
@@ -13,8 +19,12 @@ export class UserResponseDto {
   status: User['status'];
   agreedTermsVersion: User['agreedTermsVersion'];
   createdAt: Date;
+  // 관리자 콘솔 진입(관리자)·운영팀 표시용.
+  isAdmin: boolean;
+  isStaff: boolean;
+  restriction: UserRestrictionInfoDto | null;
 
-  constructor(user: User) {
+  constructor(user: User, restriction: UserRestrictionInfoDto | null = null) {
     this.id = user.id;
     this.email = user.email;
     this.nickname = user.nickname;
@@ -27,5 +37,8 @@ export class UserResponseDto {
     this.status = user.status;
     this.agreedTermsVersion = user.agreedTermsVersion;
     this.createdAt = user.createdAt;
+    this.isAdmin = user.isAdmin;
+    this.isStaff = user.isStaff;
+    this.restriction = restriction;
   }
 }

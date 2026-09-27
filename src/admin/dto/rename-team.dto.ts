@@ -1,9 +1,9 @@
 import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
-// Spec 10.2/10.4: 부정 응답 제외 + 점수 차감 사유.
-export class ExcludeSubmissionDto {
+// 관리자 콘솔 "팀 이름 강제 변경": 새 이름은 서버가 "팀+숫자 5자리"로 만든다.
+export class RenameTeamDto {
   @IsString()
-  @IsNotEmpty({ message: '제외 사유를 입력해주세요.' })
+  @IsNotEmpty({ message: '사유를 입력해주세요.' })
   @MaxLength(100)
   reason: string;
 

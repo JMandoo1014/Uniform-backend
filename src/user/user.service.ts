@@ -40,6 +40,22 @@ export class UserService {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
+  // 이용 제한 안내 화면용 — 아직 해제되지 않은 가장 최근 제한.
+  async findActiveRestriction(
+    userId: string,
+  ): Promise<{ reason: string; endsAt: string | null } | null> {
+    const restriction = await this.prisma.userRestriction.findFirst({
+      where: { userId, liftedAt: null },
+      orderBy: { startedAt: 'desc' },
+    });
+    return restriction
+      ? {
+          reason: restriction.reason,
+          endsAt: restriction.endsAt?.toISOString() ?? null,
+        }
+      : null;
+  }
+
   findByVerificationToken(token: string) {
     return this.prisma.user.findUnique({
       where: { emailVerificationToken: token },

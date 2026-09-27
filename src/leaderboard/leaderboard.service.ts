@@ -110,10 +110,12 @@ export class LeaderboardService {
       create: { id: DEFAULT_LEADERBOARD_CONFIG_ID },
       update: {},
     });
-    return new LeaderboardRewardsConfigDto(
-      config.rewardText,
-      config.tieRuleText,
-    );
+    return new LeaderboardRewardsConfigDto({
+      title: config.title,
+      body: config.body,
+      tiers: [0, 1, 2].map((i) => config.tiers[i] ?? ''),
+      tieRuleText: config.tieRuleText,
+    });
   }
 
   // Spec 6.4/6.5: 나와 같은 순위 번호를 가진 사람이 2명 이상이면(동점 그룹)
@@ -138,6 +140,7 @@ export class LeaderboardService {
   // 제출 시각, 점수는 제출마다 1씩만 늘므로 둘은 항상 같은 값이다) 오름차순.
   // 6.6: 이용제한·탈퇴 회원은 제외. 부정 응답으로 차감된(revokedAt 존재) 점수는
   // 집계에서 뺀다(10.4). 응답 0회 회원은 목록에 없다(6.4). 최대 50명까지만.
+  // 6.3/11: 운영팀 구성원 계정(isStaff)도 리더보드에서 숨긴다.
   private async getRankedRows(weekStart: Date): Promise<RankedRow[]> {
     const grouped = await this.prisma.leaderboardScore.groupBy({
       by: ['userId'],
@@ -150,7 +153,7 @@ export class LeaderboardService {
 
     const userIds = grouped.map((row) => row.userId);
     const users = await this.prisma.user.findMany({
-      where: { id: { in: userIds }, status: UserStatus.ACTIVE },
+      where: { id: { in: userIds }, status: UserStatus.ACTIVE, isStaff: false },
       select: { id: true, nickname: true },
     });
     const nicknameById = new Map(users.map((u) => [u.id, u.nickname ?? '']));

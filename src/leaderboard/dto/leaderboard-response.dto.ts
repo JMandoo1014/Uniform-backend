@@ -91,12 +91,15 @@ export class LastWeekLeaderboardResponseDto {
 }
 
 // Spec 6.3: 보상 상품은 미정이라 관리자가 입력한 문구를 그대로 보여준다.
+// 리더보드 상단 보상 안내 — 관리자 콘솔 "보상 안내" 화면과 같은 구조.
+// tiers는 항상 [1위, 2위, 3위] 3칸으로 내려준다(비어 있으면 빈 문자열).
 export class LeaderboardRewardsConfigDto {
-  rewardText: string;
+  title: string;
+  body: string;
+  tiers: string[];
   tieRuleText: string;
 
-  constructor(rewardText: string, tieRuleText: string) {
-    this.rewardText = rewardText;
-    this.tieRuleText = tieRuleText;
+  constructor(init: LeaderboardRewardsConfigDto) {
+    Object.assign(this, init);
   }
 }
