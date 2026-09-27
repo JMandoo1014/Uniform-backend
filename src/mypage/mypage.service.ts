@@ -98,6 +98,14 @@ export class MypageService {
         survey.ownerType === SurveyOwnerType.USER
           ? survey.ownerId === userId
           : teamLeaderIdById.get(survey.ownerId) === userId;
+      // I5: survey.service.ts deleteDraft와 같은 규칙 — DRAFT 상태 +
+      // (USER는 본인, TEAM은 만든 사람 또는 팀장).
+      const canDelete =
+        survey.status === SurveyStatus.DRAFT &&
+        (survey.ownerType === SurveyOwnerType.USER
+          ? survey.ownerId === userId
+          : survey.creatorId === userId ||
+            teamLeaderIdById.get(survey.ownerId) === userId);
       const teamDisbandedAt =
         survey.ownerType === SurveyOwnerType.TEAM
           ? (teamDisbandedAtById.get(survey.ownerId) ?? null)
@@ -108,6 +116,7 @@ export class MypageService {
           ? (me.nickname ?? '')
           : (teamNameById.get(survey.ownerId) ?? ''),
         canManage,
+        canDelete,
         teamDisbandedAt,
       );
     });
@@ -164,6 +173,7 @@ export class MypageService {
       await this.loadSurveyOrThrow(surveyId),
       ownerName,
       true,
+      false,
       teamDisbandedAt,
     );
   }
@@ -194,6 +204,7 @@ export class MypageService {
       await this.loadSurveyOrThrow(surveyId),
       ownerName,
       true,
+      false,
       teamDisbandedAt,
     );
   }
@@ -260,6 +271,7 @@ export class MypageService {
     survey: SurveyWithCount,
     ownerName: string,
     canManage: boolean,
+    canDelete: boolean,
     teamDisbandedAt: Date | null,
   ): MySurveyResponseDto {
     return new MySurveyResponseDto({
@@ -267,6 +279,7 @@ export class MypageService {
       title: survey.title,
       ownerType: survey.ownerType,
       ownerName,
+      teamId: survey.ownerType === SurveyOwnerType.TEAM ? survey.ownerId : null,
       status: survey.status,
       questionCount: survey._count.questions,
       category: survey.category,
@@ -279,6 +292,7 @@ export class MypageService {
       deadlineAt: survey.deadlineAt?.toISOString() ?? null,
       purgeAt: survey.purgeAt?.toISOString() ?? null,
       canManage,
+      canDelete,
       teamDisbandedAt: teamDisbandedAt?.toISOString() ?? null,
     });
   }

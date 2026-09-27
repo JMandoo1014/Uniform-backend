@@ -42,9 +42,14 @@ export class NoProfileChangesException extends BusinessException {
   }
 }
 
+// I7: 401은 "이 요청의 인증(JWT)이 무효"라는 뜻으로 프론트 axios 인터셉터가
+// 세션 만료로 해석해 강제 로그아웃시킨다(apiClient.js). 이건 이미 로그인된
+// 사용자가 비밀번호 변경 중 현재 비밀번호를 잘못 입력한 것 — 세션은 멀쩡하고
+// 입력값이 틀린 것뿐이라 401이 아니라 다른 "입력값이 틀렸다" 예외들(예:
+// InvalidVerificationTokenException)과 같은 400으로 맞춘다.
 export class CurrentPasswordMismatchException extends BusinessException {
   constructor() {
-    super('현재 비밀번호가 올바르지 않습니다.', HttpStatus.UNAUTHORIZED);
+    super('현재 비밀번호가 올바르지 않습니다.', HttpStatus.BAD_REQUEST);
   }
 }
 
@@ -218,9 +223,18 @@ export class InvalidInviteTokenException extends BusinessException {
   }
 }
 
-export class AlreadyTeamMemberException extends BusinessException {
+// I6: 동시에 같은 초대 링크로 두 번 가입 요청이 오면(중복 클릭 등) 두 번째
+// 요청이 team_members의 (teamId, userId) unique 제약에 걸려 Prisma P2002를
+// 던진다 — team.service.ts joinTeam이 이걸 잡아 이 예외로 바꾼다. 사전 확인
+// (멤버 여부 조회) 실패든 레이스로 인한 P2002든 결과는 항상 이 예외로
+// 동일하다는 걸 프론트가 code로 구분할 수 있게 SurveyVersionConflictException과
+// 같은 패턴(object body + code)을 쓴다.
+export class AlreadyTeamMemberException extends HttpException {
   constructor() {
-    super('이미 가입한 팀입니다.', HttpStatus.CONFLICT);
+    super(
+      { message: '이미 가입한 팀입니다.', code: 'ALREADY_TEAM_MEMBER' },
+      HttpStatus.CONFLICT,
+    );
   }
 }
 

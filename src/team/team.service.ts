@@ -112,6 +112,13 @@ export class TeamService {
   }
 
   // Spec 3.1: 초대 링크로만 가입, 인원 초과·3개 팀 초과·무효 토큰은 거부.
+  //
+  // I6: 사전 확인(team.members로 중복/정원 체크)과 실제 INSERT 사이에 다른
+  // 요청이 끼어들 수 있다(같은 초대 링크로 중복 클릭 등) — 두 요청이 동시에
+  // 사전 확인을 통과하면 team_members의 (teamId, userId) unique 제약 때문에
+  // 나중 INSERT가 Prisma P2002로 실패해 그대로 500이 나갔다. 사전 확인 +
+  // INSERT를 한 트랜잭션으로 묶고, 그 안에서도 P2002가 나면(레이스에서 진
+  // 요청) "이미 가입됨"으로 간주해 같은 4xx로 바꿔준다.
   async joinTeam(
     userId: string,
     dto: JoinTeamDto,
@@ -120,21 +127,31 @@ export class TeamService {
 
     const team = await this.prisma.team.findFirst({
       where: { inviteToken: dto.inviteToken, disbandedAt: null },
-      include: TEAM_WITH_MEMBERS_INCLUDE,
     });
     if (!team) {
       throw new InvalidInviteTokenException();
     }
-
-    if (team.members.some((member) => member.userId === userId)) {
-      throw new AlreadyTeamMemberException();
-    }
-    if (team.members.length >= MAX_TEAM_MEMBERS) {
-      throw new TeamFullException();
-    }
     await this.assertUnderTeamLimit(userId);
 
-    await this.prisma.teamMember.create({ data: { teamId: team.id, userId } });
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const memberCount = await tx.teamMember.count({
+          where: { teamId: team.id },
+        });
+        if (memberCount >= MAX_TEAM_MEMBERS) {
+          throw new TeamFullException();
+        }
+        await tx.teamMember.create({ data: { teamId: team.id, userId } });
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new AlreadyTeamMemberException();
+      }
+      throw error;
+    }
 
     const updated = await this.prisma.team.findUniqueOrThrow({
       where: { id: team.id },

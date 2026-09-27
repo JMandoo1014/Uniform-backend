@@ -16,6 +16,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TeamService } from '../team/team.service';
 import {
   AccountNotActiveException,
+  NotTeamMemberException,
   SurveyNotDraftException,
   SurveyVersionConflictException,
   TeamDraftDeleteForbiddenException,
@@ -84,13 +85,15 @@ export class SurveyService {
     // 방금 만든 초안이므로 개인 초안이면 항상 본인, 팀 초안이면 방금 확인한
     // assertActiveMembership과 별개로 팀장 여부를 다시 조회해 판단한다.
     const canManage = await this.resolveCanManageForOne(survey, userId);
-    return new SurveyResponseDto(survey, canManage);
+    const canDelete = await this.computeCanDeleteForOne(survey, userId);
+    return new SurveyResponseDto(survey, canManage, canDelete);
   }
 
   async getDraft(userId: string, surveyId: string): Promise<SurveyResponseDto> {
     const survey = await this.findAccessibleSurveyOrThrow(userId, surveyId);
     const canManage = await this.resolveCanManageForOne(survey, userId);
-    return new SurveyResponseDto(survey, canManage);
+    const canDelete = await this.computeCanDeleteForOne(survey, userId);
+    return new SurveyResponseDto(survey, canManage, canDelete);
   }
 
   // Spec 4.1: 낙관적 락(version) + 문항 전체 교체 방식의 임시저장. 4.3의
@@ -153,13 +156,15 @@ export class SurveyService {
         include: SURVEY_WITH_QUESTIONS_INCLUDE,
       });
       const canManage = await this.resolveCanManageForOne(latest, userId);
+      const canDelete = await this.computeCanDeleteForOne(latest, userId);
       throw new SurveyVersionConflictException(
-        new SurveyResponseDto(latest, canManage),
+        new SurveyResponseDto(latest, canManage, canDelete),
       );
     }
 
     const canManage = await this.resolveCanManageForOne(updated, userId);
-    return new SurveyResponseDto(updated, canManage);
+    const canDelete = await this.computeCanDeleteForOne(updated, userId);
+    return new SurveyResponseDto(updated, canManage, canDelete);
   }
 
   // Spec 3.1: "팀 초안 삭제는 팀장 또는 만든 사람만." USER 초안은 기존 그대로
@@ -202,7 +207,8 @@ export class SurveyService {
 
     if (survey.status === SurveyStatus.RECRUITING) {
       const canManage = await this.resolveCanManageForOne(survey, userId);
-      return new SurveyResponseDto(survey, canManage);
+      const canDelete = await this.computeCanDeleteForOne(survey, userId);
+      return new SurveyResponseDto(survey, canManage, canDelete);
     }
     if (survey.status !== SurveyStatus.DRAFT) {
       throw new SurveyNotDraftException();
@@ -245,7 +251,8 @@ export class SurveyService {
     }
 
     const canManage = await this.resolveCanManageForOne(published, userId);
-    return new SurveyResponseDto(published, canManage);
+    const canDelete = await this.computeCanDeleteForOne(published, userId);
+    return new SurveyResponseDto(published, canManage, canDelete);
   }
 
   // Spec 5.2: 모집 중인 설문만 게시 시각 최신순(동률이면 id 내림차순)으로.
@@ -344,6 +351,7 @@ export class SurveyService {
       displayNameByOwnerId.get(survey.ownerId) ?? null,
       viewerId,
       this.computeCanManage(survey, viewerId, teamLeaderIdByTeamId),
+      this.computeCanDelete(survey, viewerId, teamLeaderIdByTeamId),
     );
   }
 
@@ -381,7 +389,10 @@ export class SurveyService {
   // Spec 4.1: "본인 설문 또는 소속 팀 설문의 제목·설명·문항·보기·문항 설정을 복사해
   // 같은 작성 공간에 새 초안을 만든다. 응답은 가져오지 않는다." 목표 인원·마감일은
   // 나열되지 않은 항목이라 복사하지 않는다 — 복사의 대표 용도가 "게시 후 바뀌지
-  // 않는 목표/마감일을 바꾸려고 새로 게시"하는 것이기도 하다(4.5).
+  // 않는 목표/마감일을 바꾸려고 새로 게시"하는 것이기도 하다(4.5). category·
+  // estimatedMinutes는 targetCount/deadlineAt과 달리 게시 후에도 자유롭게
+  // 바꿀 수 있는 표시 속성이라 이 제외 이유가 적용되지 않으므로 그대로 복사한다.
+
   async copySurvey(
     userId: string,
     surveyId: string,
@@ -403,6 +414,8 @@ export class SurveyService {
         creatorId: userId,
         title: source.title,
         description: source.description,
+        category: source.category,
+        estimatedMinutes: source.estimatedMinutes,
         status: SurveyStatus.DRAFT,
         questions: {
           create: source.questions.map((question) => ({
@@ -470,6 +483,16 @@ export class SurveyService {
   }
 
   // Spec 3.2/4.1: 개인 초안은 작성자만, 팀 초안은 현재 팀원만 조회·수정할 수 있다.
+  //
+  // (2026-09-27 수정) 팀 분기는 원래 teamService.assertActiveMembership만
+  // 썼는데, 이건 팀이 해산되면(disbandedAt 존재) 무조건 404를 던진다. DRAFT
+  // 상태 팀 설문은 해산 시 이미 개인 초안으로 이관되니 이 메서드의 원래
+  // 의도(초안 조회/수정) 안에서는 문제가 없었지만, copySurvey는 이 메서드를
+  // "원본" 조회에도 그대로 써서 RECRUITING 이후 상태의 팀 설문(해산 후에도
+  // 팀 소유로 남는 것 — team.service.ts disbandTeam 참고)을 복사하려 할 때도
+  // 404가 났다. result.service.ts assertCanView와 같은 이유로, 팀이
+  // 해산됐어도 해산 당시 팀장이면 접근을 허용하도록 그 경우만 raw 쿼리로
+  // 따로 처리한다(팀이 아직 살아있을 때의 "현재 팀원만" 규칙은 그대로 둔다).
   private async findAccessibleSurveyOrThrow(
     userId: string,
     surveyId: string,
@@ -486,8 +509,23 @@ export class SurveyService {
       if (survey.ownerId !== userId) {
         throw new NotFoundException('설문을 찾을 수 없습니다.');
       }
-    } else {
-      await this.teamService.assertActiveMembership(survey.ownerId, userId);
+      return survey;
+    }
+
+    const team = await this.prisma.team.findUnique({
+      where: { id: survey.ownerId },
+      select: { leaderId: true, disbandedAt: true },
+    });
+
+    if (team && !team.disbandedAt) {
+      const membership = await this.prisma.teamMember.findUnique({
+        where: { teamId_userId: { teamId: survey.ownerId, userId } },
+      });
+      if (!membership) {
+        throw new NotTeamMemberException();
+      }
+    } else if (!team || team.leaderId !== userId) {
+      throw new NotFoundException('설문을 찾을 수 없습니다.');
     }
 
     return survey;
@@ -673,5 +711,60 @@ export class SurveyService {
     userId: string,
   ): Promise<boolean> {
     return this.resolveCanManageForOne(survey, userId);
+  }
+
+  // FormMate 연동: resolveCanManage와 같은 이유로 canDelete도 공개 진입점을 둔다.
+  async resolveCanDelete(
+    survey: {
+      status: SurveyStatus;
+      ownerType: SurveyOwnerType;
+      ownerId: string;
+      creatorId: string;
+    },
+    userId: string,
+  ): Promise<boolean> {
+    return this.computeCanDeleteForOne(survey, userId);
+  }
+
+  // I5: deleteDraft의 실제 삭제 권한 규칙(DRAFT 상태 + (USER는 본인, TEAM은
+  // 만든 사람 또는 팀장))을 응답 필드용으로 다시 표현한 것 — deleteDraft
+  // 자체를 이걸 쓰도록 리팩터링하지는 않았다. deleteDraft는 "권한 없음(403)"과
+  // "이미 DRAFT가 아님(409)"을 구분해서 던져야 하는데, 이 헬퍼는 표시용으로
+  // 두 조건을 하나의 boolean으로 합친 것이라 그대로 재사용하면 그 구분이
+  // 사라진다. 같은 규칙을 두 곳에 따로 적어두는 대신, deleteDraft를 건드리는
+  // 것보다 이미 동작 중인 예외 흐름을 그대로 두는 쪽이 안전하다고 판단했다.
+  private computeCanDelete(
+    survey: {
+      status: SurveyStatus;
+      ownerType: SurveyOwnerType;
+      ownerId: string;
+      creatorId: string;
+    },
+    viewerId: string,
+    teamLeaderIdByTeamId: Map<string, string>,
+  ): boolean {
+    if (survey.status !== SurveyStatus.DRAFT) {
+      return false;
+    }
+    if (survey.ownerType === SurveyOwnerType.USER) {
+      return survey.ownerId === viewerId;
+    }
+    return (
+      survey.creatorId === viewerId ||
+      teamLeaderIdByTeamId.get(survey.ownerId) === viewerId
+    );
+  }
+
+  private async computeCanDeleteForOne(
+    survey: {
+      status: SurveyStatus;
+      ownerType: SurveyOwnerType;
+      ownerId: string;
+      creatorId: string;
+    },
+    viewerId: string,
+  ): Promise<boolean> {
+    const { teamLeaderIdByTeamId } = await this.resolveOwnerInfo([survey]);
+    return this.computeCanDelete(survey, viewerId, teamLeaderIdByTeamId);
   }
 }

@@ -305,8 +305,12 @@ export class FormMateService {
         latest,
         userId,
       );
+      const canDelete = await this.surveyService.resolveCanDelete(
+        latest,
+        userId,
+      );
       throw new SurveyVersionConflictException(
-        new SurveyResponseDto(latest, canManage),
+        new SurveyResponseDto(latest, canManage, canDelete),
       );
     }
 
