@@ -64,10 +64,38 @@ export class ResponseService {
       );
     }
 
-    const session = await this.prisma.responseSession.create({
-      data: { surveyId, userId },
-    });
-    return new SessionResponseDto(session.id, []);
+    // I6: 위 조회에서 세션이 없었더라도, 그 직후 같은 (surveyId, userId)로
+    // 동시 요청(중복 클릭·재시도 등)이 먼저 세션을 만들었을 수 있다 —
+    // responseSession의 (surveyId, userId) unique 제약에 걸려 Prisma P2002가
+    // 그대로 500으로 나가던 지점. 레이스에서 진 요청은 이미 만들어진 세션을
+    // 그대로 돌려줘 멱등하게 만든다(에러로 바꾸지 않는다 — join과 달리 여기는
+    // "먼저 만든 세션을 이어서 쓰는 것"이 원래도 정상 동작이므로).
+    try {
+      const session = await this.prisma.responseSession.create({
+        data: { surveyId, userId },
+      });
+      return new SessionResponseDto(session.id, []);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const raced = await this.prisma.responseSession.findUniqueOrThrow({
+          where: { surveyId_userId: { surveyId, userId } },
+          include: { answers: true },
+        });
+        if (raced.status === ResponseSessionStatus.SUBMITTED) {
+          throw new AlreadyRespondedException();
+        }
+        return new SessionResponseDto(
+          raced.id,
+          raced.answers.map(
+            (a) => new SessionAnswerItemDto(a.questionId, a.value),
+          ),
+        );
+      }
+      throw error;
+    }
   }
 
   // Spec 5.3 "답 입력·변경": 제출 전 임시저장. 응답 수·점수에는 반영하지 않는다.
