@@ -62,6 +62,28 @@ export class MailService {
     );
   }
 
+  // Spec 9 확장: 새 문의가 접수되면 관리자 이메일로 알림한다. 문의자가 입력한
+  // subject/message는 HTML로 해석되지 않게 이스케이프한다(sendNotice와 같은 이유).
+  async sendInquiryNotification(
+    adminEmail: string,
+    inquiry: { email: string; subject: string; message: string },
+  ): Promise<void> {
+    const escape = (text: string) =>
+      text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    await this.send(
+      adminEmail,
+      `[UniForm] 새 문의: ${inquiry.subject}`,
+      `<p>문의자: ${escape(inquiry.email)}</p>` +
+        `<p>제목: ${escape(inquiry.subject)}</p>` +
+        `<p>내용:</p>` +
+        `<p>${escape(inquiry.message).replace(/\n/g, '<br>')}</p>`,
+    );
+  }
+
   // Spec 8.4: 운영 삭제·이용 제한·닉네임 강제 변경·보상 발송 등 "앱 + 이메일"
   // 알림. 문구에 관리자가 입력한 사유 등이 들어가므로 HTML로 해석되지 않게 이스케이프한다.
   async sendNotice(

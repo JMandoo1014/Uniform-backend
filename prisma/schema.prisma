@@ -86,6 +86,13 @@ enum ResponseSessionStatus {
   SUBMITTED
 }
 
+// Spec 9 확장: MVP 명세는 mailto 안내만이었지만("별도 신고 접수 기능은
+// MVP에서 만들지 않는다"), 인앱 문의 접수 기능을 추가하며 새로 정의한다.
+enum InquiryStatus {
+  PENDING
+  ANSWERED
+}
+
 // Spec 8.4: notification catalog. Team-domain events (team join/publish/leader
 // change/disband) are written here too so Dashboard recent-activity (12.3 ⑩)
 // can reuse one table instead of a separate activity log.
@@ -153,6 +160,7 @@ model User {
   restrictions       UserRestriction[]   @relation("RestrictedUser")
   restrictionsIssued UserRestriction[]   @relation("RestrictionIssuedBy")
   adminActionLogs    AdminActionLog[]    @relation("AdminActor")
+  inquiries          Inquiry[]
 
   @@map("users")
 }
@@ -554,4 +562,24 @@ model UserRestriction {
 
   @@index([userId])
   @@map("user_restrictions")
+}
+
+// Spec 9 확장: 고객센터 문의 접수(2026-09-28 신설). email은 userId와 별도로
+// 저장한다 — 비로그인 문의를 허용하고(작성 당시 계정이 나중에 지워져도 문의
+// 기록 자체는 이메일로 계속 식별 가능해야 하므로), 그래서 userId도 onDelete
+// SetNull로 둔다(다른 사용자 소유 테이블들의 일반적인 Cascade와 다르게 판단한
+// 부분 — 지원 티켓 성격상 작성자 탈퇴 후에도 관리자가 문의 이력을 봐야 함).
+model Inquiry {
+  id        String        @id @default(uuid())
+  userId    String?
+  email     String
+  subject   String
+  message   String
+  status    InquiryStatus @default(PENDING)
+  createdAt DateTime      @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@map("inquiries")
 }
