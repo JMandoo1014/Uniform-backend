@@ -16,6 +16,7 @@ import type { JwtPayload } from '../auth/types/jwt-payload.type';
 import { LeaderboardRewardsConfigDto } from '../leaderboard/dto/leaderboard-response.dto';
 import { AdminGuard } from './guards/admin.guard';
 import { AdminAuditService } from './admin-audit.service';
+import { AdminInquiriesService } from './admin-inquiries.service';
 import { AdminMembersService } from './admin-members.service';
 import { AdminRewardsService } from './admin-rewards.service';
 import { AdminSummaryService } from './admin-summary.service';
@@ -51,6 +52,9 @@ import {
   AdminSurveyRestoredDto,
 } from './dto/admin-survey.dto';
 import { AdminTeamDto, AdminTeamRenamedDto } from './dto/admin-team.dto';
+import { AdminInquiryDto } from './dto/admin-inquiry.dto';
+import { ListAdminInquiriesQueryDto } from './dto/list-admin-inquiries-query.dto';
+import { UpdateInquiryStatusDto } from './dto/update-inquiry-status.dto';
 
 type Success = { success: boolean };
 
@@ -67,6 +71,7 @@ export class AdminController {
     private readonly teams: AdminTeamsService,
     private readonly rewards: AdminRewardsService,
     private readonly audit: AdminAuditService,
+    private readonly inquiries: AdminInquiriesService,
   ) {}
 
   @Get('summary')
@@ -244,5 +249,27 @@ export class AdminController {
   @Get('logs')
   listLogs(): Promise<AdminLogDto[]> {
     return this.audit.list();
+  }
+
+  // ---- 문의 ----
+  @Get('inquiries')
+  listInquiries(
+    @Query() query: ListAdminInquiriesQueryDto,
+  ): Promise<AdminInquiryDto[]> {
+    return this.inquiries.listInquiries(query);
+  }
+
+  @Get('inquiries/:id')
+  getInquiry(@Param('id') id: string): Promise<AdminInquiryDto> {
+    return this.inquiries.getInquiry(id);
+  }
+
+  @Patch('inquiries/:id/status')
+  updateInquiryStatus(
+    @CurrentUser() admin: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: UpdateInquiryStatusDto,
+  ): Promise<AdminInquiryDto> {
+    return this.inquiries.updateStatus(admin.sub, id, dto);
   }
 }
