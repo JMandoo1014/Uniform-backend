@@ -115,6 +115,9 @@ enum NotificationType {
   RESPONSE_SUBMITTED
   SURVEY_PUBLISHED
   TEAM_NAME_FORCED
+  // Spec 10.2/10.4 확장: 관리자가 부정 응답으로 집계에서 제외하면 응답자
+  // 본인에게도 알린다(2026-09-28 추가 — 지금까지 알 방법이 없었음).
+  RESPONSE_EXCLUDED
 }
 
 model User {
