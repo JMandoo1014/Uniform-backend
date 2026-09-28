@@ -138,6 +138,8 @@ export class MypageService {
           status: session.status,
           submittedAt: session.submittedAt?.toISOString() ?? null,
           points: session.score?.points ?? null,
+          excluded: !!session.excludedAt,
+          excludedReason: session.excludedReason,
         }),
     );
   }

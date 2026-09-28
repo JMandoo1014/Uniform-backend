@@ -290,6 +290,10 @@ export class AdminSurveysService {
     }
 
     const now = new Date();
+    // Spec 10.2/10.4 확장: 지금까지 응답자 본인은 자기 응답이 제외됐는지 알
+    // 방법이 없었다 — restrict()가 이미 쓰는 "앱 알림 + 이메일" 패턴을 그대로
+    // 재사용한다.
+    const message = `"${session.survey.title}" 설문 응답이 집계에서 제외되었습니다. 사유: ${dto.reason}`;
     await this.prisma.$transaction(async (tx) => {
       const { count } = await tx.responseSession.updateMany({
         where: { id: sessionId, excludedAt: null },
@@ -314,6 +318,14 @@ export class AdminSurveysService {
         where: { id: session.surveyId },
         data: { responseCount: { decrement: 1 } },
       });
+      await tx.notification.create({
+        data: {
+          userId: session.userId,
+          type: NotificationType.RESPONSE_EXCLUDED,
+          message,
+          targetUrl: '/mypage/responses',
+        },
+      });
       await this.audit.record(
         {
           adminId,
@@ -329,6 +341,9 @@ export class AdminSurveysService {
         tx,
       );
     });
+    if (session.user.email) {
+      void this.mail.sendNotice(session.user.email, '응답 제외 안내', message);
+    }
     return { success: true };
   }
 
@@ -362,7 +377,7 @@ export class AdminSurveysService {
       where: { id: sessionId },
       include: {
         survey: { select: { title: true } },
-        user: { select: { nickname: true } },
+        user: { select: { nickname: true, email: true } },
       },
     });
     if (!session || session.status !== ResponseSessionStatus.SUBMITTED) {
