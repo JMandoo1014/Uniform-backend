@@ -3,29 +3,32 @@ import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { formatKstDateTime } from '../common/utils/kst-date.util';
 
-// Gmail SMTP로 인증/재설정 메일을 보낸다. EMAIL_USER/EMAIL_APP_PASSWORD는
-// Gmail 앱 비밀번호(2단계 인증 활성화 후 발급) — 계정 비밀번호 그대로는
-// SMTP 인증에 쓸 수 없다.
+// Resend 도메인(uniform-app.com) 인증 완료 후 Gmail SMTP에서 교체(2026-09-28).
+// Resend SMTP는 인증 사용자명이 고정 문자열 "resend"이고 비밀번호 자리에
+// Resend API 키(RESEND_API_KEY)를 넣는다 — 발신 주소 자체와는 무관하다.
+// 포트는 기존 Gmail 설정과 같은 587(STARTTLS)로 맞췄다 — 465(암묵적 TLS)도
+// Resend가 지원하지만, 이 프로젝트 nodemailer 설정은 이미 587+secure:false
+// 방식이었으므로 그대로 유지해 호스트/인증 정보만 바뀐 것으로 보이게 했다.
+const FROM_ADDRESS = 'Uni-Form <noreply@uniform-app.com>';
+
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private readonly transporter: nodemailer.Transporter;
-  private readonly fromAddress: string;
   private readonly frontendUrl: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.fromAddress = this.configService.getOrThrow<string>('EMAIL_USER');
     this.frontendUrl = this.configService.get<string>(
       'FRONTEND_URL',
       'http://localhost:5173',
     );
     this.transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
+      host: 'smtp.resend.com',
       port: 587,
       secure: false, // STARTTLS
       auth: {
-        user: this.fromAddress,
-        pass: this.configService.getOrThrow<string>('EMAIL_APP_PASSWORD'),
+        user: 'resend',
+        pass: this.configService.getOrThrow<string>('RESEND_API_KEY'),
       },
     });
   }
@@ -113,7 +116,7 @@ export class MailService {
   private async send(to: string, subject: string, html: string): Promise<void> {
     try {
       await this.transporter.sendMail({
-        from: this.fromAddress,
+        from: FROM_ADDRESS,
         to,
         subject,
         html,
