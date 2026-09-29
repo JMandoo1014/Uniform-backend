@@ -103,78 +103,111 @@ export class FormMateService {
       conversation,
     );
 
-    const savedChanges = await this.prisma.$transaction(async (tx) => {
-      const assistantMessage = await tx.formMateMessage.create({
-        data: {
-          surveyId,
-          userId,
-          role: FormMateMessageRole.ASSISTANT,
-          content: result.replyText,
-        },
-      });
-
-      const created: {
-        id: string;
-        type: string;
-        summary: string;
-        after: Prisma.JsonValue;
-      }[] = [];
-
-      for (const change of result.changes) {
-        if (!isFormMateChangeType(change.type)) {
-          continue;
-        }
-        // 스키마로 after를 필수로 걸어도 모델이 null이나 필수 필드가 빠진
-        // 문항을 줄 수 있다 — 그대로 저장하면 apply 시점에 문항을 만들 수
-        // 없으므로, 적용 불가능한 제안은 아예 저장하지 않는다.
-        if (
-          changeRequiresAfter(change.type) &&
-          !isValidQuestionDraft(change.after)
-        ) {
-          continue;
-        }
-
-        // Spec 4.2: before는 AI가 아니라 서버가 현재 DB 상태에서 직접 계산한다.
-        const target = change.targetStableKey
-          ? survey.questions.find((q) => q.stableKey === change.targetStableKey)
-          : undefined;
-
-        if (change.type !== 'ADD_QUESTION' && !target) {
-          // Gemini가 존재하지 않는 targetStableKey를 지어낸 경우 — 적용
-          // 불가능한 제안이므로 아예 저장하지 않는다.
-          continue;
-        }
-
-        const before = target
-          ? (toQuestionDraft(target) as unknown as Prisma.InputJsonValue)
-          : Prisma.JsonNull;
-
-        const row = await tx.formMateProposedChange.create({
+    const { savedChanges, appliedTitle, appliedDescription } =
+      await this.prisma.$transaction(async (tx) => {
+        const assistantMessage = await tx.formMateMessage.create({
           data: {
-            messageId: assistantMessage.id,
             surveyId,
-            type: change.type,
-            summary: change.summary,
-            targetStableKey: change.targetStableKey ?? null,
-            before,
-            // DELETE_QUESTION은 after가 없다 — 모델이 뭔가 채워 보내도 버린다.
-            after: changeRequiresAfter(change.type)
-              ? (change.after as unknown as Prisma.InputJsonValue)
-              : Prisma.JsonNull,
+            userId,
+            role: FormMateMessageRole.ASSISTANT,
+            content: result.replyText,
           },
         });
-        created.push({
-          id: row.id,
-          type: row.type,
-          summary: row.summary,
-          after: row.after,
-        });
-      }
 
-      return created;
-    });
+        const created: {
+          id: string;
+          type: string;
+          summary: string;
+          after: Prisma.JsonValue;
+        }[] = [];
 
-    return new SendFormMateMessageResponseDto(result.replyText, savedChanges);
+        for (const change of result.changes) {
+          if (!isFormMateChangeType(change.type)) {
+            continue;
+          }
+          // 스키마로 after를 필수로 걸어도 모델이 null이나 필수 필드가 빠진
+          // 문항을 줄 수 있다 — 그대로 저장하면 apply 시점에 문항을 만들 수
+          // 없으므로, 적용 불가능한 제안은 아예 저장하지 않는다.
+          if (
+            changeRequiresAfter(change.type) &&
+            !isValidQuestionDraft(change.after)
+          ) {
+            continue;
+          }
+
+          // Spec 4.2: before는 AI가 아니라 서버가 현재 DB 상태에서 직접 계산한다.
+          const target = change.targetStableKey
+            ? survey.questions.find(
+                (q) => q.stableKey === change.targetStableKey,
+              )
+            : undefined;
+
+          if (change.type !== 'ADD_QUESTION' && !target) {
+            // Gemini가 존재하지 않는 targetStableKey를 지어낸 경우 — 적용
+            // 불가능한 제안이므로 아예 저장하지 않는다.
+            continue;
+          }
+
+          const before = target
+            ? (toQuestionDraft(target) as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull;
+
+          const row = await tx.formMateProposedChange.create({
+            data: {
+              messageId: assistantMessage.id,
+              surveyId,
+              type: change.type,
+              summary: change.summary,
+              targetStableKey: change.targetStableKey ?? null,
+              before,
+              // DELETE_QUESTION은 after가 없다 — 모델이 뭔가 채워 보내도 버린다.
+              after: changeRequiresAfter(change.type)
+                ? (change.after as unknown as Prisma.InputJsonValue)
+                : Prisma.JsonNull,
+            },
+          });
+          created.push({
+            id: row.id,
+            type: row.type,
+            summary: row.summary,
+            after: row.after,
+          });
+        }
+
+        // 제목/설명은 changeIds 선택 적용 흐름을 안 타고 이 턴에서 바로
+        // 반영한다 — 마음에 안 들면 사용자가 직접 다시 고치면 되므로 확인
+        // 절차가 없다. updateDraft/applyChanges와 같은 낙관적 락(version)은
+        // 그대로 지키되, 다른 요청과 충돌해도(count === 0) 이 메시지 자체를
+        // 실패시키지 않고 이번 턴에서만 조용히 건너뛴다 — 답변과 문항 제안은
+        // 그대로 저장·반환된다.
+        let appliedTitle: string | undefined;
+        let appliedDescription: string | undefined;
+        const newTitle = result.title?.trim();
+        const hasDescription = result.description !== undefined;
+        if (newTitle || hasDescription) {
+          const data: Prisma.SurveyUpdateInput = { version: { increment: 1 } };
+          if (newTitle) data.title = newTitle;
+          if (hasDescription) data.description = result.description;
+
+          const { count } = await tx.survey.updateMany({
+            where: { id: surveyId, version: survey.version },
+            data,
+          });
+          if (count > 0) {
+            if (newTitle) appliedTitle = newTitle;
+            if (hasDescription) appliedDescription = result.description;
+          }
+        }
+
+        return { savedChanges: created, appliedTitle, appliedDescription };
+      });
+
+    return new SendFormMateMessageResponseDto(
+      result.replyText,
+      savedChanges,
+      appliedTitle,
+      appliedDescription,
+    );
   }
 
   // Spec 4.2 apply: updateDraft와 동일한 접근 권한 기준을 그대로 쓴다.
@@ -408,10 +441,20 @@ export class FormMateService {
 
     return [
       '당신은 대학(원)생 설문조사 플랫폼 Uni-Form의 설문 작성 도우미 FormMate입니다.',
-      '사용자가 설문 문항을 만들거나 고치는 것을 대화로 돕습니다.',
+      '사용자가 설문 제목·설명·문항을 만들거나 고치는 것을 대화로 돕습니다.',
+      '',
       '문항을 추가/수정/삭제하고 싶다는 요청이면 changes 배열에 제안을 담아 응답하고,',
       '단순 질문이나 설명 요청이면 changes를 빈 배열로 둔 채 replyText로만 답하세요.',
       'targetStableKey는 아래 "현재 문항 목록"에 있는 id 값만 사용하세요 — 지어내지 마세요.',
+      '',
+      '설문 제목이나 설명을 새로 만들거나 바꾸고 싶다는 요청(예: "~설문 만들어줘"처럼',
+      '새 설문을 시작해달라는 요청도 포함)이면 title/description 필드에 새 값을 담아',
+      '응답하세요. 그런 요청이 아니면 두 필드를 생략하세요(현재 값 그대로 유지).',
+      '문항 제안(changes)과 달리 title/description은 사용자가 확인하는 절차 없이',
+      '이 응답 즉시 그대로 반영되니, 실제로 사용자가 원하는 것 같을 때만 채우세요.',
+      '',
+      `현재 설문 제목: ${JSON.stringify(survey.title)}`,
+      `현재 설문 설명: ${JSON.stringify(survey.description ?? null)}`,
       '',
       '현재 문항 목록(JSON):',
       JSON.stringify(currentQuestions),

@@ -33,8 +33,15 @@ export interface FormMateProposedChangeDraft {
   after?: FormMateQuestionDraft | null;
 }
 
+// 제목/설명 제안은 문항 제안(changes)과 달리 changeIds 선택 적용 흐름을
+// 타지 않는다 — 모델이 채워서 주면 그 턴에서 바로 draft에 반영한다(사용자
+// 확인 없이). 그래서 별도 FormMateProposedChange 레코드로 안 만들고
+// 최상위 필드로 둔다. 값이 없으면(그 요청과 무관하면) 생략 — null이 아니라
+// undefined로 취급해 "제안 없음"과 "빈 문자열로 지우기"를 구분한다.
 export interface FormMateGenerateResult {
   replyText: string;
+  title?: string;
+  description?: string;
   changes: FormMateProposedChangeDraft[];
 }
 

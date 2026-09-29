@@ -80,10 +80,20 @@ const EXISTING_QUESTION = {
   options: [],
 };
 
-function buildDraftSurvey(overrides: Partial<{ status: SurveyStatus }> = {}) {
+function buildDraftSurvey(
+  overrides: Partial<{
+    status: SurveyStatus;
+    title: string;
+    description: string | null;
+    version: number;
+  }> = {},
+) {
   return {
     id: 'survey-1',
     status: overrides.status ?? SurveyStatus.DRAFT,
+    title: overrides.title ?? '기존 제목',
+    description: overrides.description ?? null,
+    version: overrides.version ?? 0,
     questions: [EXISTING_QUESTION],
   };
 }
@@ -369,6 +379,107 @@ describe('FormMateService', () => {
 
       expect(prisma.formMateProposedChange.create).not.toHaveBeenCalled();
       expect(result.proposedChanges).toEqual([]);
+    });
+
+    // 제목/설명은 changeIds로 고르는 흐름이 없다 — Gemini가 응답에 담아
+    // 주면 이 턴에서 바로 draft에 반영된다(사용자 확인 없이).
+    describe('title/description auto-apply', () => {
+      it('immediately applies a proposed title and description, bumping version', async () => {
+        const survey = buildDraftSurvey({ version: 3 });
+        surveyService.getAccessibleSurveyOrThrow.mockResolvedValue(survey);
+        prisma.formMateMessage.create.mockResolvedValueOnce({ id: 'msg-user' });
+        prisma.formMateMessage.findMany.mockResolvedValue([]);
+        prisma.formMateMessage.create.mockResolvedValueOnce({
+          id: 'msg-assistant',
+        });
+        geminiService.generateReply.mockResolvedValue({
+          replyText: '설문을 만들었어요.',
+          title: '대학생 학습 플랫폼 이용 경험 조사',
+          description: '학습 플랫폼 이용 경험을 알아보는 설문입니다.',
+          changes: [],
+        });
+
+        const result = await service.sendMessage('user-1', 'survey-1', {
+          message: '대학생 학습 플랫폼 이용 경험 설문 만들어줘',
+        });
+
+        expect(prisma.survey.updateMany).toHaveBeenCalledWith({
+          where: { id: 'survey-1', version: 3 },
+          data: {
+            version: { increment: 1 },
+            title: '대학생 학습 플랫폼 이용 경험 조사',
+            description: '학습 플랫폼 이용 경험을 알아보는 설문입니다.',
+          },
+        });
+        expect(result.updatedTitle).toBe('대학생 학습 플랫폼 이용 경험 조사');
+        expect(result.updatedDescription).toBe(
+          '학습 플랫폼 이용 경험을 알아보는 설문입니다.',
+        );
+      });
+
+      it('omits updatedTitle/updatedDescription and never touches Survey when the reply has neither', async () => {
+        surveyService.getAccessibleSurveyOrThrow.mockResolvedValue(
+          buildDraftSurvey(),
+        );
+        prisma.formMateMessage.create.mockResolvedValueOnce({ id: 'msg-user' });
+        prisma.formMateMessage.findMany.mockResolvedValue([]);
+        prisma.formMateMessage.create.mockResolvedValueOnce({
+          id: 'msg-assistant',
+        });
+        geminiService.generateReply.mockResolvedValue({
+          replyText: '리더보드 점수는 제출 1건당 1점이에요.',
+          changes: [],
+        });
+
+        const result = await service.sendMessage('user-1', 'survey-1', {
+          message: '점수는 어떻게 쌓여?',
+        });
+
+        expect(prisma.survey.updateMany).not.toHaveBeenCalled();
+        expect(result.updatedTitle).toBeUndefined();
+        expect(result.updatedDescription).toBeUndefined();
+      });
+
+      it('keeps the chat reply and question changes even if the title/description version check loses a race', async () => {
+        surveyService.getAccessibleSurveyOrThrow.mockResolvedValue(
+          buildDraftSurvey({ version: 5 }),
+        );
+        prisma.formMateMessage.create.mockResolvedValueOnce({ id: 'msg-user' });
+        prisma.formMateMessage.findMany.mockResolvedValue([]);
+        prisma.formMateMessage.create.mockResolvedValueOnce({
+          id: 'msg-assistant',
+        });
+        prisma.formMateProposedChange.create.mockResolvedValue({
+          id: 'change-1',
+          type: 'ADD_QUESTION',
+          summary: '문항 추가',
+          after: { questionText: '새 문항' },
+        });
+        geminiService.generateReply.mockResolvedValue({
+          replyText: '제목을 바꾸고 문항도 하나 추가했어요.',
+          title: '새 제목',
+          changes: [
+            {
+              type: 'ADD_QUESTION',
+              summary: '문항 추가',
+              after: {
+                type: 'SHORT_ANSWER',
+                questionText: '새 문항입니다',
+              },
+            },
+          ],
+        });
+        // 다른 요청이 먼저 버전을 올린 상황을 흉내낸다 — count: 0.
+        prisma.survey.updateMany.mockResolvedValueOnce({ count: 0 });
+
+        const result = await service.sendMessage('user-1', 'survey-1', {
+          message: '제목 바꾸고 문항도 추가해줘',
+        });
+
+        expect(result.updatedTitle).toBeUndefined();
+        expect(result.aiReply).toBe('제목을 바꾸고 문항도 하나 추가했어요.');
+        expect(result.proposedChanges).toHaveLength(1);
+      });
     });
   });
 
