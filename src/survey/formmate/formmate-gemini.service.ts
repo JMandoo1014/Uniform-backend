@@ -134,12 +134,24 @@ const FORMMATE_CHANGE_SCHEMA: Schema = {
   ],
 };
 
+// title/description은 changes(문항)와 달리 선택 적용 없이 바로 반영되는
+// 필드라 required가 아니다 — 관련 없는 요청이면 모델이 아예 생략한다.
 const FORMMATE_RESPONSE_SCHEMA: Schema = {
   type: Type.OBJECT,
   properties: {
     replyText: {
       type: Type.STRING,
       description: '사용자에게 그대로 보여줄 대화형 답변.',
+    },
+    title: {
+      type: Type.STRING,
+      description:
+        '설문 제목을 새로 만들거나 바꾸자는 요청일 때만 포함한다(사용자 확인 없이 바로 반영됨). 그런 요청이 아니면 이 필드 자체를 생략할 것.',
+    },
+    description: {
+      type: Type.STRING,
+      description:
+        '설문 설명을 새로 만들거나 바꾸자는 요청일 때만 포함한다(사용자 확인 없이 바로 반영됨). 그런 요청이 아니면 이 필드 자체를 생략할 것.',
     },
     changes: {
       type: Type.ARRAY,
