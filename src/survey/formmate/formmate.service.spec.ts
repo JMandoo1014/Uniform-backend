@@ -17,6 +17,7 @@ import { SurveyService } from '../survey.service';
 import { FormMateGeminiService } from './formmate-gemini.service';
 import { FormMateService } from './formmate.service';
 import { FormMateQuestionDraft } from './formmate.types';
+import { FORMMATE_TITLE_MAX_LENGTH } from './formmate.constants';
 
 type ReplaceSurveyQuestionsCall = [
   unknown,
@@ -479,6 +480,88 @@ describe('FormMateService', () => {
         expect(result.updatedTitle).toBeUndefined();
         expect(result.aiReply).toBe('제목을 바꾸고 문항도 하나 추가했어요.');
         expect(result.proposedChanges).toHaveLength(1);
+      });
+
+      // title은 확인 절차 없이 바로 반영되므로, 스키마 지시를 어기고 Gemini가
+      // 부연 설명까지 통째로 title에 담아 보내는 경우를 서버가 걸러내야 한다.
+      it('truncates a proposed title that exceeds the max length before applying it', async () => {
+        const survey = buildDraftSurvey({ version: 1 });
+        surveyService.getAccessibleSurveyOrThrow.mockResolvedValue(survey);
+        prisma.formMateMessage.create.mockResolvedValueOnce({ id: 'msg-user' });
+        prisma.formMateMessage.findMany.mockResolvedValue([]);
+        prisma.formMateMessage.create.mockResolvedValueOnce({
+          id: 'msg-assistant',
+        });
+        const longTitle = '가'.repeat(FORMMATE_TITLE_MAX_LENGTH + 20);
+        geminiService.generateReply.mockResolvedValue({
+          replyText: '제목을 정했어요.',
+          title: longTitle,
+          changes: [],
+        });
+
+        const result = await service.sendMessage('user-1', 'survey-1', {
+          message: '설문 제목 정해줘',
+        });
+
+        const expectedTitle = longTitle.slice(0, FORMMATE_TITLE_MAX_LENGTH);
+        expect(result.updatedTitle).toBe(expectedTitle);
+        expect(result.updatedTitle).toHaveLength(FORMMATE_TITLE_MAX_LENGTH);
+        expect(prisma.survey.updateMany).toHaveBeenCalledWith({
+          where: { id: 'survey-1', version: 1 },
+          data: { version: { increment: 1 }, title: expectedTitle },
+        });
+      });
+
+      it('drops everything after the first line when the proposed title has explanatory text stuffed after a newline', async () => {
+        const survey = buildDraftSurvey({ version: 2 });
+        surveyService.getAccessibleSurveyOrThrow.mockResolvedValue(survey);
+        prisma.formMateMessage.create.mockResolvedValueOnce({ id: 'msg-user' });
+        prisma.formMateMessage.findMany.mockResolvedValue([]);
+        prisma.formMateMessage.create.mockResolvedValueOnce({
+          id: 'msg-assistant',
+        });
+        geminiService.generateReply.mockResolvedValue({
+          replyText: '제목을 정했어요.',
+          title:
+            '대학생 학습 플랫폼 이용 경험 설문\n정식 제목은 위와 같습니다만, 마음에 안 드시면 언제든 다시 요청해 주세요.',
+          changes: [],
+        });
+
+        const result = await service.sendMessage('user-1', 'survey-1', {
+          message: '대학생 학습 플랫폼 이용 경험 설문 만들어줘',
+        });
+
+        expect(result.updatedTitle).toBe('대학생 학습 플랫폼 이용 경험 설문');
+        expect(prisma.survey.updateMany).toHaveBeenCalledWith({
+          where: { id: 'survey-1', version: 2 },
+          data: {
+            version: { increment: 1 },
+            title: '대학생 학습 플랫폼 이용 경험 설문',
+          },
+        });
+      });
+
+      it('treats a title that sanitizes to an empty string as if none were proposed', async () => {
+        surveyService.getAccessibleSurveyOrThrow.mockResolvedValue(
+          buildDraftSurvey(),
+        );
+        prisma.formMateMessage.create.mockResolvedValueOnce({ id: 'msg-user' });
+        prisma.formMateMessage.findMany.mockResolvedValue([]);
+        prisma.formMateMessage.create.mockResolvedValueOnce({
+          id: 'msg-assistant',
+        });
+        geminiService.generateReply.mockResolvedValue({
+          replyText: '알겠습니다.',
+          title: '   \n실제 제목은 둘째 줄에 있습니다.',
+          changes: [],
+        });
+
+        const result = await service.sendMessage('user-1', 'survey-1', {
+          message: '음...',
+        });
+
+        expect(result.updatedTitle).toBeUndefined();
+        expect(prisma.survey.updateMany).not.toHaveBeenCalled();
       });
     });
   });

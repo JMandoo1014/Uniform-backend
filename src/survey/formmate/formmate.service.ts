@@ -22,7 +22,10 @@ import { FormMateGeminiService } from './formmate-gemini.service';
 import { SendFormMateMessageDto } from './dto/send-formmate-message.dto';
 import { ApplyFormMateChangesDto } from './dto/apply-formmate-changes.dto';
 import { SendFormMateMessageResponseDto } from './dto/send-formmate-message-response.dto';
-import { FORMMATE_RECENT_MESSAGE_LIMIT } from './formmate.constants';
+import {
+  FORMMATE_RECENT_MESSAGE_LIMIT,
+  FORMMATE_TITLE_MAX_LENGTH,
+} from './formmate.constants';
 import {
   changeRequiresAfter,
   isFormMateChangeType,
@@ -35,6 +38,17 @@ import {
 } from './formmate.types';
 
 type SurveyQuestionWithOptions = SurveyWithQuestions['questions'][number];
+
+// Gemini가 스키마 지시(짧은 명사구, 개행 금지, 최대 길이)를 어기고 title에
+// 부연 설명 문장 전체를 담아 보내는 경우가 있었다 — title은 사용자 확인 없이
+// 그대로 draft에 반영되므로, 반영 전 서버에서 한 번 더 걸러낸다. 개행이 있으면
+// 그 뒤는 설명문일 가능성이 높다고 보고 첫 줄만 취하고, 길이도 다시 자른다.
+// 그러고도 빈 문자열이면(예: 첫 줄이 공백뿐) 제안 자체가 없었던 것으로 취급한다.
+function sanitizeProposedTitle(rawTitle: string): string | undefined {
+  const firstLine = rawTitle.split('\n')[0].trim();
+  const truncated = firstLine.slice(0, FORMMATE_TITLE_MAX_LENGTH).trim();
+  return truncated || undefined;
+}
 
 function toQuestionDraft(
   question: SurveyQuestionWithOptions,
@@ -182,7 +196,10 @@ export class FormMateService {
         // 그대로 저장·반환된다.
         let appliedTitle: string | undefined;
         let appliedDescription: string | undefined;
-        const newTitle = result.title?.trim();
+        const newTitle =
+          result.title !== undefined
+            ? sanitizeProposedTitle(result.title)
+            : undefined;
         const hasDescription = result.description !== undefined;
         if (newTitle || hasDescription) {
           const data: Prisma.SurveyUpdateInput = { version: { increment: 1 } };
@@ -452,6 +469,9 @@ export class FormMateService {
       '응답하세요. 그런 요청이 아니면 두 필드를 생략하세요(현재 값 그대로 유지).',
       '문항 제안(changes)과 달리 title/description은 사용자가 확인하는 절차 없이',
       '이 응답 즉시 그대로 반영되니, 실제로 사용자가 원하는 것 같을 때만 채우세요.',
+      `title은 짧은 명사구 하나만 쓰세요(최대 ${FORMMATE_TITLE_MAX_LENGTH}자). 문장이나`,
+      '인사말, "~입니다" 같은 부연 설명, 줄바꿈을 title에 넣지 마세요 — 그런 내용은',
+      'replyText에만 쓰세요.',
       '',
       `현재 설문 제목: ${JSON.stringify(survey.title)}`,
       `현재 설문 설명: ${JSON.stringify(survey.description ?? null)}`,
