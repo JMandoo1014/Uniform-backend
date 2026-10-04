@@ -13,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import {
   formatKstDateTime,
+  getKstWeekRange,
   getKstWeekStart,
 } from '../common/utils/kst-date.util';
 import { DEFAULT_LEADERBOARD_CONFIG_ID } from '../leaderboard/leaderboard.constants';
@@ -29,7 +30,6 @@ import {
 } from './admin.constants';
 import {
   RankedRow,
-  WEEK_MS,
   assignRewardSlots,
   parseWeekKey,
   pickLotteryWinners,
@@ -123,8 +123,8 @@ export class AdminRewardsService {
           status: ResponseSessionStatus.SUBMITTED,
           sameScaleWarningAcknowledged: true,
           submittedAt: {
-            gte: weekStart,
-            lt: new Date(weekStart.getTime() + WEEK_MS),
+            gte: getKstWeekRange(weekStart).start,
+            lt: getKstWeekRange(weekStart).end,
           },
         },
         _count: { _all: true },
@@ -321,7 +321,7 @@ export class AdminRewardsService {
     note: AdminActionNoteDto,
   ): Promise<AdminRewardWeekDetailDto> {
     const weekStart = this.parseWeekOrThrow(weekKey);
-    if (weekStart.getTime() + WEEK_MS > Date.now()) {
+    if (getKstWeekRange(weekStart).end.getTime() > Date.now()) {
       throw new BadRequestException(
         '아직 끝나지 않은 주차는 정산할 수 없습니다.',
       );

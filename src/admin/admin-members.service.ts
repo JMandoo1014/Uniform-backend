@@ -16,6 +16,7 @@ import { MailService } from '../mail/mail.service';
 import { NicknameAlreadyExistsException } from '../common/exceptions/business.exception';
 import {
   formatKstDateTime,
+  getKstWeekRange,
   getKstWeekStart,
 } from '../common/utils/kst-date.util';
 import { AdminAuditService } from './admin-audit.service';
@@ -26,7 +27,7 @@ import {
   ADMIN_TARGET_TYPES,
   USER_STATUS_LABELS,
 } from './admin.constants';
-import { WEEK_MS, generateNumberedName } from './admin-ranking.util';
+import { generateNumberedName } from './admin-ranking.util';
 import { ListAdminUsersQueryDto } from './dto/list-admin-users-query.dto';
 import { RestrictUserDto } from './dto/restrict-user.dto';
 import { NicknameForceChangeDto } from './dto/nickname-force-change.dto';
@@ -83,11 +84,8 @@ export class AdminMembersService {
     await this.findUserOrThrow(userId);
     const where: Prisma.ResponseSessionWhereInput = { userId };
     if (week) {
-      const weekStart = this.rewards.parseWeekOrThrow(week);
-      where.submittedAt = {
-        gte: weekStart,
-        lt: new Date(weekStart.getTime() + WEEK_MS),
-      };
+      const range = getKstWeekRange(this.rewards.parseWeekOrThrow(week));
+      where.submittedAt = { gte: range.start, lt: range.end };
     }
     return this.surveys.listResponses(where);
   }
@@ -380,7 +378,7 @@ export class AdminMembersService {
         where: {
           ...submitted,
           sameScaleWarningAcknowledged: true,
-          submittedAt: { gte: weekStart },
+          submittedAt: { gte: getKstWeekRange(weekStart).start },
         },
         _count: { _all: true },
       }),

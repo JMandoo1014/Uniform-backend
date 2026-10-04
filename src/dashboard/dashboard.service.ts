@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   addDaysToKstDateString,
   getKstTodayDateString,
+  getKstWeekRange,
   getKstWeekStart,
   kstDateStringToUtcStartOfDay,
 } from '../common/utils/kst-date.util';
@@ -60,10 +61,12 @@ export class DashboardService {
       (s) => s.responseCount >= 1,
     ).length;
 
-    const thisWeekStart = getKstWeekStart(new Date());
-    const lastWeekStart = new Date(
-      thisWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000,
-    );
+    // 실제 기간 기준(예외 주는 7일이 아닐 수 있음): 이번 주 시작 ~ 지금, 지난주 시작 ~ 이번 주 시작.
+    const thisWeekKey = getKstWeekStart(new Date());
+    const thisWeekStart = getKstWeekRange(thisWeekKey).start;
+    const lastWeekStart = getKstWeekRange(
+      new Date(thisWeekKey.getTime() - 7 * 24 * 60 * 60 * 1000),
+    ).start;
     const [weeklyParticipationCount, lastWeekParticipationCount] =
       await Promise.all([
         this.prisma.responseSession.count({
