@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { getKstWeekStart } from '../common/utils/kst-date.util';
+import {
+  getKstWeekRange,
+  getKstWeekStart,
+} from '../common/utils/kst-date.util';
 import {
   DEFAULT_LEADERBOARD_CONFIG_ID,
   LEADERBOARD_MAX_ENTRIES,
@@ -36,7 +39,9 @@ export class LeaderboardService {
     page: number | undefined,
   ): Promise<LeaderboardResponseDto> {
     const weekStart = getKstWeekStart(new Date());
-    const weekEnd = new Date(weekStart.getTime() + WEEK_MS - 1);
+    // 표시·남은 시간은 실제 기간 기준(예외 주는 7일이 아닐 수 있음). 점수 집계는 key(weekStart)로.
+    const range = getKstWeekRange(weekStart);
+    const weekEnd = new Date(range.end.getTime() - 1);
     const ranked = await this.getRankedRows(weekStart);
 
     const currentPage = page ?? 1;
@@ -82,7 +87,7 @@ export class LeaderboardService {
     );
 
     return new LeaderboardResponseDto(
-      weekStart,
+      range.start,
       weekEnd,
       ranked.length,
       top3,
@@ -94,14 +99,18 @@ export class LeaderboardService {
   async getLastWeek(): Promise<LastWeekLeaderboardResponseDto> {
     const currentWeekStart = getKstWeekStart(new Date());
     const weekStart = new Date(currentWeekStart.getTime() - WEEK_MS);
-    const weekEnd = new Date(weekStart.getTime() + WEEK_MS - 1);
+    const range = getKstWeekRange(weekStart);
     const ranked = await this.getRankedRows(weekStart);
     const top3 = ranked
       .slice(0, 3)
       .map(
         (row) => new LeaderboardEntryDto(row.rank, row.nickname, row.points),
       );
-    return new LastWeekLeaderboardResponseDto(weekStart, weekEnd, top3);
+    return new LastWeekLeaderboardResponseDto(
+      range.start,
+      new Date(range.end.getTime() - 1),
+      top3,
+    );
   }
 
   async getRewardsConfig(): Promise<LeaderboardRewardsConfigDto> {

@@ -3,6 +3,7 @@ import { MailModule } from '../mail/mail.module';
 import { AdminController } from './admin.controller';
 import { AdminGuard } from './guards/admin.guard';
 import { AdminAuditService } from './admin-audit.service';
+import { AdminInquiriesService } from './admin-inquiries.service';
 import { AdminMembersService } from './admin-members.service';
 import { AdminRewardsService } from './admin-rewards.service';
 import { AdminSummaryService } from './admin-summary.service';
@@ -20,6 +21,7 @@ import { AdminTeamsService } from './admin-teams.service';
     AdminMembersService,
     AdminTeamsService,
     AdminSummaryService,
+    AdminInquiriesService,
   ],
 })
 export class AdminModule {}

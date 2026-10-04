@@ -11,7 +11,10 @@ import {
   FormMateConversationTurn,
   FormMateGenerateResult,
 } from './formmate.types';
-import { FORMMATE_MAX_OUTPUT_TOKENS } from './formmate.constants';
+import {
+  FORMMATE_MAX_OUTPUT_TOKENS,
+  FORMMATE_TITLE_MAX_LENGTH,
+} from './formmate.constants';
 
 // Spec 4.2: 문항 하나의 "될 내용". 예전에는 객체 전체를 nullable로 두고
 // DELETE_QUESTION일 때만 null을 쓰게 했는데, 가벼운 모델이 ADD/UPDATE에서도
@@ -134,12 +137,28 @@ const FORMMATE_CHANGE_SCHEMA: Schema = {
   ],
 };
 
+// title/description은 changes(문항)와 달리 선택 적용 없이 바로 반영되는
+// 필드라 required가 아니다 — 관련 없는 요청이면 모델이 아예 생략한다.
 const FORMMATE_RESPONSE_SCHEMA: Schema = {
   type: Type.OBJECT,
   properties: {
     replyText: {
       type: Type.STRING,
       description: '사용자에게 그대로 보여줄 대화형 답변.',
+    },
+    title: {
+      type: Type.STRING,
+      maxLength: String(FORMMATE_TITLE_MAX_LENGTH),
+      description:
+        `설문 제목을 새로 만들거나 바꾸자는 요청일 때만 포함한다(사용자 확인 없이 바로 반영됨). ` +
+        `그런 요청이 아니면 이 필드 자체를 생략할 것. 짧은 명사구 하나만 쓸 것(예: "대학생 학습 ` +
+        `플랫폼 이용 경험 설문") — 문장이나 인사말, 부연 설명, "~입니다", 줄바꿈을 포함하지 말고 ` +
+        `최대 ${FORMMATE_TITLE_MAX_LENGTH}자를 넘기지 말 것. 설명이나 대화체 답변은 title이 아니라 replyText에만 쓸 것.`,
+    },
+    description: {
+      type: Type.STRING,
+      description:
+        '설문 설명을 새로 만들거나 바꾸자는 요청일 때만 포함한다(사용자 확인 없이 바로 반영됨). 그런 요청이 아니면 이 필드 자체를 생략할 것.',
     },
     changes: {
       type: Type.ARRAY,
