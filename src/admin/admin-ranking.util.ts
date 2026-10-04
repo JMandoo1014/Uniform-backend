@@ -2,6 +2,7 @@ import { randomInt } from 'crypto';
 import { Prisma, SurveyQuestionType } from '@prisma/client';
 import {
   addDaysToKstDateString,
+  getKstWeekRange,
   getKstWeekStart,
   isValidKstDateString,
   kstDateStringToUtcStartOfDay,
@@ -107,10 +108,11 @@ export function toWeekKey(weekStart: Date): string {
   return toKstDateString(weekStart);
 }
 
-// "9.21 ~ 9.27"
+// "9.21 ~ 9.27" (예외 주는 실제 기간, 예: "10.4 ~ 10.11")
 export function weekRangeLabel(weekStart: Date): string {
-  const start = toKstDateString(weekStart);
-  const end = addDaysToKstDateString(start, 6);
+  const range = getKstWeekRange(weekStart);
+  const start = toKstDateString(range.start);
+  const end = addDaysToKstDateString(toKstDateString(range.end), -1);
   const short = (value: string) => {
     const [, month, day] = value.split('-').map(Number);
     return `${month}.${day}`;

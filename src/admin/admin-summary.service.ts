@@ -3,6 +3,7 @@ import { ResponseSessionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   getKstTodayDateString,
+  getKstWeekRange,
   getKstWeekStart,
   kstDateStringToUtcStartOfDay,
 } from '../common/utils/kst-date.util';
@@ -20,7 +21,7 @@ export class AdminSummaryService {
 
   async getSummary(): Promise<AdminSummaryDto> {
     const today = kstDateStringToUtcStartOfDay(getKstTodayDateString());
-    const week = getKstWeekStart(new Date());
+    const week = getKstWeekRange(getKstWeekStart(new Date())).start;
 
     const metric = async (
       countSince: (since?: Date) => Promise<number>,
