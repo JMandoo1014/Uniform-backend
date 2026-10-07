@@ -10,15 +10,18 @@ export const UNVERIFIED_ACCOUNT_TTL_DAYS = 7;
 // 처리 완료(ANSWERED)된 문의를 지우기까지의 기간.
 export const ANSWERED_INQUIRY_RETENTION_DAYS = 365;
 
-// 관리자 조치 기록은 지우지 않되(10.1), 이 기간이 지나면 당시 닉네임 등
-// 개인정보가 들어갈 수 있는 필드만 비운다.
+// 관리자 조치 기록: 이 기간이 지나면 조치 종류·일시·관리자 id·대상 id만 남기고
+// 대상 이름·사유·메모·변경 전후 값을 파기 문구로 덮어쓴다(명세 10.1 변경).
 export const ADMIN_LOG_PERSONAL_DATA_RETENTION_DAYS = 365;
+
+// 알림: 발송(생성) 후 이 기간이 지나면 행을 삭제한다.
+export const NOTIFICATION_RETENTION_DAYS = 365;
 
 // 이용 제한 기록: 해제(liftedAt) 후 이 기간이 지나면 사유 등 식별 정보를 파기한다.
 // 기록 자체(누가·언제·얼마나 제한됐는지)는 남긴다.
 export const RESTRICTION_PERSONAL_DATA_RETENTION_DAYS = 365;
 
-// UserRestriction.reason은 NOT NULL이라 null 대신 이 문구로 덮어쓴다.
-export const SCRUBBED_RESTRICTION_REASON = '(보관 기간이 지나 파기됨)';
+// 보유 기간이 지나 파기한 텍스트 자리에 남기는 문구(관리자 로그·이용 제한 기록 공통).
+export const SCRUBBED_TEXT = '(보관 기간이 지나 파기됨)';
 
 export const DAY_MS = 24 * 60 * 60 * 1000;

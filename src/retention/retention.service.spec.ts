@@ -22,6 +22,7 @@ function buildPrisma() {
     inquiry: model(),
     adminActionLog: model(),
     userRestriction: model(),
+    notification: model(),
     $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   };
   return prisma;
@@ -83,6 +84,7 @@ describe('RetentionService', () => {
     }
     expect(prisma.adminActionLog.updateMany).not.toHaveBeenCalled();
     expect(prisma.userRestriction.updateMany).not.toHaveBeenCalled();
+    expect(prisma.notification.deleteMany).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(prisma.scheduledJobRun.update).toHaveBeenCalled();
   });
@@ -99,6 +101,7 @@ describe('RetentionService', () => {
     expect(prisma.inquiry.deleteMany).toHaveBeenCalled();
     expect(prisma.adminActionLog.updateMany).toHaveBeenCalled();
     expect(prisma.userRestriction.updateMany).toHaveBeenCalled();
+    expect(prisma.notification.deleteMany).toHaveBeenCalled();
     expect(prisma.scheduledJobRun.update).toHaveBeenCalledWith({
       where: {
         jobName_runDate: {
@@ -167,6 +170,22 @@ describe('RetentionService', () => {
       expect(String(warnSpy.mock.calls[0][0])).toContain('survey_purge');
     } finally {
       warnSpy.mockRestore();
+    }
+  });
+
+  it('admin-log-scrub overwrites each personal field separately with the scrub text', async () => {
+    const prisma = buildPrisma();
+
+    await buildService(prisma).scrubAdminLogPersonalData(NOW, false);
+
+    const calls = prisma.adminActionLog.updateMany.mock.calls as [
+      { where: Record<string, unknown>; data: Record<string, string> },
+    ][];
+    expect(calls.map(([args]) => Object.keys(args.data)[0]).sort()).toEqual(
+      ['afterValue', 'beforeValue', 'memo', 'reason', 'targetName'].sort(),
+    );
+    for (const [args] of calls) {
+      expect(Object.values(args.data)).toEqual(['(보관 기간이 지나 파기됨)']);
     }
   });
 });

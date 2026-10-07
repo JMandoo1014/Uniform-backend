@@ -157,6 +157,31 @@ describeIfIsolatedDb('RetentionService (e2e, isolated DB)', () => {
       });
     ids.logOld = (await log(ago(366))).id;
     ids.logNew = (await log(ago(364))).id;
+    ids.logOldNoMemo = (
+      await prisma.adminActionLog.create({
+        data: {
+          adminId: ids.admin,
+          action: 'SURVEY_REMOVE',
+          targetType: 'Survey',
+          targetId: 'survey-x',
+          targetName: '설문 제목',
+          reason: '광고성 설문',
+          createdAt: ago(366),
+        },
+      })
+    ).id;
+
+    const notification = (createdAt: Date) =>
+      prisma.notification.create({
+        data: {
+          userId: ids.respondent,
+          type: 'ACCOUNT_RESTRICTED',
+          message: '이용이 제한되었습니다. 사유: 욕설 신고 누적',
+          createdAt,
+        },
+      });
+    ids.notifOld = (await notification(ago(366))).id;
+    ids.notifNew = (await notification(ago(364))).id;
 
     const restriction = (data: Record<string, unknown>) =>
       prisma.userRestriction.create({
@@ -187,7 +212,7 @@ describeIfIsolatedDb('RetentionService (e2e, isolated DB)', () => {
       where: { userId: ids.respondent },
     });
     await prisma.adminActionLog.deleteMany({
-      where: { id: { in: [ids.logOld, ids.logNew] } },
+      where: { id: { in: [ids.logOld, ids.logNew, ids.logOldNoMemo] } },
     });
     await prisma.inquiry.deleteMany({ where: { email: `q-${s}@example.com` } });
     await prisma.withdrawnEmail.deleteMany({
@@ -254,6 +279,15 @@ describeIfIsolatedDb('RetentionService (e2e, isolated DB)', () => {
       logNew: await prisma.adminActionLog.findUniqueOrThrow({
         where: { id: ids.logNew },
       }),
+      logOldNoMemo: await prisma.adminActionLog.findUniqueOrThrow({
+        where: { id: ids.logOldNoMemo },
+      }),
+      notifOld: await exists(
+        prisma.notification.findUnique({ where: { id: ids.notifOld } }),
+      ),
+      notifNew: await exists(
+        prisma.notification.findUnique({ where: { id: ids.notifNew } }),
+      ),
       restrictions: await prisma.userRestriction.findMany({
         where: { userId: ids.respondent },
         orderBy: { id: 'asc' },
@@ -304,15 +338,30 @@ describeIfIsolatedDb('RetentionService (e2e, isolated DB)', () => {
       inqNew: true,
       inqPending: true,
     });
+    // 관리자 로그: 1년 지나면 종류·일시·관리자 id·대상 id만 남기고 덮어쓴다
+    const SCRUBBED = '(보관 기간이 지나 파기됨)';
     expect(after.logOld).toMatchObject({
-      targetName: null,
-      memo: null,
-      beforeValue: null,
-      afterValue: null,
-      reason: '부적절한 닉네임',
+      targetName: SCRUBBED,
+      reason: SCRUBBED,
+      memo: SCRUBBED,
+      beforeValue: SCRUBBED,
+      afterValue: SCRUBBED,
+      action: 'MEMBER_NICKNAME_FORCE',
+      targetType: 'Member',
       adminId: ids.admin,
       targetId: ids.respondent,
     });
+    // 원래 비어 있던 필드는 비어 있는 채로
+    expect(after.logOldNoMemo).toMatchObject({
+      targetName: SCRUBBED,
+      reason: SCRUBBED,
+      memo: null,
+      beforeValue: null,
+      afterValue: null,
+    });
+    // 알림: 발송 1년 지난 것만 삭제
+    expect(after.notifOld).toBe(false);
+    expect(after.notifNew).toBe(true);
     expect(after.logNew).toMatchObject({
       targetName: '옛닉네임',
       memo: '메모',
@@ -323,7 +372,7 @@ describeIfIsolatedDb('RetentionService (e2e, isolated DB)', () => {
     // 이용 제한: 해제 후 1년 지난 기록만 사유 파기, 행·기간·조치자는 유지
     const byId = new Map(after.restrictions.map((r) => [r.id, r]));
     expect(byId.get(ids.restrictLiftedOld)).toMatchObject({
-      reason: '(보관 기간이 지나 파기됨)',
+      reason: SCRUBBED,
       liftedReason: null,
       durationDays: 7,
       userId: ids.respondent,
