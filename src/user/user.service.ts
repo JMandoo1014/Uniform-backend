@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   Prisma,
   SurveyOwnerType,
@@ -13,20 +14,34 @@ import {
   NicknameAlreadyExistsException,
   NoProfileChangesException,
 } from '../common/exceptions/business.exception';
-import { hashEmail } from '../common/utils/email-hash.util';
+import {
+  DAY_MS,
+  WITHDRAWN_EMAIL_BLOCK_DAYS,
+} from '../common/constants/retention.constant';
+import { hmacEmail, legacySha256Email } from '../common/utils/email-hash.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-
-// TODO: spec 2.2 — "7일 동안 인증하지 않으면 가입 정보를 지우고 닉네임 선점을
-// 해제한다." No scheduler exists yet; this cleanup is deliberately out of
-// scope here and will be built together with the 30-day survey purge batch
-// (spec 7.4) so both scheduled jobs land at once.
+// Spec 7.4: 마감 시각으로부터 30일 뒤 응답 원문 파기.
+const SURVEY_PURGE_AFTER_MS = 30 * DAY_MS;
 
 @Injectable()
 export class UserService {
-  constructor(private readonly prisma: PrismaService) {}
+  // 없으면 가입·탈퇴가 동작할 수 없으므로 부팅 시점에 바로 실패시킨다.
+  private readonly withdrawnEmailSecret: string;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    configService: ConfigService,
+  ) {
+    this.withdrawnEmailSecret = configService.getOrThrow<string>(
+      'WITHDRAWN_EMAIL_HMAC_SECRET',
+    );
+  }
+
+  hashWithdrawnEmail(email: string): string {
+    return hmacEmail(email, this.withdrawnEmailSecret);
+  }
 
   findByEmail(email: string) {
     return this.prisma.user.findUnique({ where: { email } });
@@ -233,7 +248,9 @@ export class UserService {
       throw new NotFoundException('사용자를 찾을 수 없습니다.');
     }
 
-    const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+    const matches =
+      user.passwordHash !== null &&
+      (await bcrypt.compare(currentPassword, user.passwordHash));
     if (!matches) {
       throw new CurrentPasswordMismatchException();
     }
@@ -253,14 +270,20 @@ export class UserService {
     });
   }
 
+  // HMAC 도입 전 행(솔트 없는 SHA-256)도 함께 대조한다 — 그 행들은 탈퇴 30일
+  // 뒤 정리 배치가 지우므로, 그 이후엔 HMAC 행만 남는다.
   async isEmailBlockedByRecentWithdrawal(email: string): Promise<boolean> {
-    const record = await this.prisma.withdrawnEmail.findUnique({
-      where: { emailHash: hashEmail(email) },
+    const record = await this.prisma.withdrawnEmail.findFirst({
+      where: {
+        emailHash: {
+          in: [this.hashWithdrawnEmail(email), legacySha256Email(email)],
+        },
+        withdrawnAt: {
+          gt: new Date(Date.now() - WITHDRAWN_EMAIL_BLOCK_DAYS * DAY_MS),
+        },
+      },
     });
-    if (!record) {
-      return false;
-    }
-    return Date.now() - record.withdrawnAt.getTime() < THIRTY_DAYS_MS;
+    return record !== null;
   }
 
   // Spec 2.5 / 3.4: 탈퇴 처리 — 팀장이면 후임자에게 자동 위임하거나 해산,
@@ -274,9 +297,9 @@ export class UserService {
       throw new AccountWithdrawnException();
     }
 
-    const emailHash = hashEmail(user.email);
+    const emailHash = this.hashWithdrawnEmail(user.email);
     const now = new Date();
-    const purgeAt = new Date(now.getTime() + THIRTY_DAYS_MS);
+    const purgeAt = new Date(now.getTime() + SURVEY_PURGE_AFTER_MS);
 
     await this.prisma.$transaction(async (tx) => {
       const ledTeams = await tx.team.findMany({
@@ -338,24 +361,44 @@ export class UserService {
         },
       });
 
+      // 응답·리더보드·설문은 회원 id로 남기고, 계정을 다시 쓸 수 있게 하거나
+      // 사람을 알아볼 수 있는 값만 지운다.
       await tx.user.update({
         where: { id: userId },
         data: {
           status: UserStatus.WITHDRAWN,
           email: null,
+          passwordHash: null,
           nickname: null,
           gender: null,
           grade: null,
           majorField: null,
           enrollmentStatus: null,
+          emailVerificationToken: null,
+          emailVerificationTokenExpiresAt: null,
+          passwordResetToken: null,
+          passwordResetTokenExpiresAt: null,
         },
       });
+
+      // 변경 전후 닉네임·프로필 원문이 남아 있으므로 함께 지운다.
+      await tx.userProfileHistory.deleteMany({ where: { userId } });
+
+      // TODO: refresh 토큰 서버 저장·폐기 작업이 들어오면 여기서 이 회원의
+      // RefreshToken을 전부 revoke한다. 지금은 stateless라 저장된 토큰이 없고,
+      // AuthService.refresh가 ACTIVE가 아닌 계정을 거부하는 것으로 막는다.
 
       await tx.userStatusHistory.create({
         data: { userId, status: UserStatus.WITHDRAWN, reason: '회원 탈퇴' },
       });
 
-      await tx.withdrawnEmail.create({ data: { emailHash } });
+      // 30일 뒤 같은 이메일로 재가입했다가 다시 탈퇴하면 이전 해시 행이 남아
+      // 있으므로 create는 unique 충돌이 난다 — 탈퇴 시각만 갱신한다.
+      await tx.withdrawnEmail.upsert({
+        where: { emailHash },
+        create: { emailHash, withdrawnAt: now },
+        update: { withdrawnAt: now },
+      });
     });
   }
 }

@@ -81,7 +81,7 @@ describe('AdminInquiriesService', () => {
 
     expect(prisma.inquiry.update).toHaveBeenCalledWith({
       where: { id: 'inq-1' },
-      data: { status: 'ANSWERED' },
+      data: { status: 'ANSWERED', answeredAt: expect.any(Date) as Date },
     });
     const [[createArgs]] = prisma.adminActionLog.create.mock.calls as [
       [{ data: Record<string, unknown> }],
@@ -95,5 +95,39 @@ describe('AdminInquiriesService', () => {
       afterValue: 'ANSWERED',
     });
     expect(result.status).toBe('ANSWERED');
+  });
+
+  it('keeps the original answeredAt when an already-answered inquiry is set to ANSWERED again', async () => {
+    prisma.inquiry.findUnique.mockResolvedValue({
+      ...INQUIRY,
+      status: 'ANSWERED',
+    });
+    prisma.inquiry.update.mockResolvedValue({ ...INQUIRY, status: 'ANSWERED' });
+
+    await service.updateStatus('admin-1', 'inq-1', {
+      status: InquiryStatus.ANSWERED,
+    });
+
+    expect(prisma.inquiry.update).toHaveBeenCalledWith({
+      where: { id: 'inq-1' },
+      data: { status: 'ANSWERED' },
+    });
+  });
+
+  it('clears answeredAt when an inquiry is moved back to PENDING', async () => {
+    prisma.inquiry.findUnique.mockResolvedValue({
+      ...INQUIRY,
+      status: 'ANSWERED',
+    });
+    prisma.inquiry.update.mockResolvedValue(INQUIRY);
+
+    await service.updateStatus('admin-1', 'inq-1', {
+      status: InquiryStatus.PENDING,
+    });
+
+    expect(prisma.inquiry.update).toHaveBeenCalledWith({
+      where: { id: 'inq-1' },
+      data: { status: 'PENDING', answeredAt: null },
+    });
   });
 });

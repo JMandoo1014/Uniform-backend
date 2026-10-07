@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { formatKstDateTime } from '../common/utils/kst-date.util';
+import { maskEmail, maskEmailsInText } from '../common/utils/mask.util';
 
 // Resend 도메인(uniform-app.com) 인증 완료 후 Gmail SMTP에서 교체(2026-09-28).
 // Resend SMTP는 인증 사용자명이 고정 문자열 "resend"이고 비밀번호 자리에
@@ -123,7 +124,7 @@ export class MailService {
       });
     } catch (error) {
       this.logger.error(
-        `메일 발송 실패 (to: ${to}, subject: ${subject}): ${(error as Error).message}`,
+        `메일 발송 실패 (to: ${maskEmail(to)}, subject: ${subject}): ${maskEmailsInText((error as Error).message)}`,
       );
     }
   }

@@ -125,10 +125,9 @@ export class AuthService {
       throw new InvalidCredentialsException();
     }
 
-    const passwordMatches = await bcrypt.compare(
-      dto.password,
-      user.passwordHash,
-    );
+    const passwordMatches =
+      user.passwordHash !== null &&
+      (await bcrypt.compare(dto.password, user.passwordHash));
     if (!passwordMatches) {
       throw new InvalidCredentialsException();
     }
@@ -234,10 +233,9 @@ export class AuthService {
       throw new InvalidCredentialsException();
     }
 
-    const passwordMatches = await bcrypt.compare(
-      dto.password,
-      user.passwordHash,
-    );
+    const passwordMatches =
+      user.passwordHash !== null &&
+      (await bcrypt.compare(dto.password, user.passwordHash));
     if (!passwordMatches) {
       throw new InvalidCredentialsException();
     }
