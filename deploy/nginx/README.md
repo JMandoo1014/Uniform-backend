@@ -10,6 +10,8 @@
 
 포트 예약: 3000 운영, 3001 개발, 3002 roomsolve(나중에 다시 쓸 때).
 
+앱은 PM2로 호스트에서 돈다(`~/Uniform-backend/dist/main.js`). 기본 바인딩은 `127.0.0.1`(`.env`의 `HOST`)이라 외부에서 앱 포트로 직접 붙을 수 없다. 서버의 `default` 사이트(`server_name _`)는 그대로 두며, 다른 Host로 들어온 요청만 받는다.
+
 ## 인증서
 
 두 사이트 모두 `/etc/uniform/ssl/origin.pem`, `origin.key`(Cloudflare Origin 인증서)를 쓴다. 개발 도메인까지 덮는지 먼저 확인한다.

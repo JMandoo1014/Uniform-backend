@@ -32,6 +32,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # 컨테이너 안에서는 compose 네트워크의 nginx가 app:3000으로 붙어야 하므로 모든
+      # 인터페이스에서 받는다(앱 기본값은 127.0.0.1). 호스트에는 여전히 publish하지 않는다.
+      HOST: 0.0.0.0
     depends_on:
       postgres:
         condition: service_healthy
