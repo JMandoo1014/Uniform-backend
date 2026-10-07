@@ -81,4 +81,58 @@ describe('HttpExceptionFilter', () => {
     expect(response.status).toHaveBeenCalledWith(404);
     expect(errorSpy).not.toHaveBeenCalled();
   });
+
+  // body-parser(http-errors)가 만드는 오류 모양: status/statusCode, expose, type.
+  function bodyParserError(status: number, message: string, type: string) {
+    return Object.assign(new Error(message), {
+      status,
+      statusCode: status,
+      expose: status < 500,
+      type,
+    });
+  }
+
+  it('answers 413 (not 500) when body-parser rejects an oversized body', () => {
+    const { host, response, json } = buildHost();
+
+    new HttpExceptionFilter().catch(
+      bodyParserError(413, 'request entity too large', 'entity.too.large'),
+      host,
+    );
+
+    expect(response.status).toHaveBeenCalledWith(413);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: 413,
+        message: 'request entity too large',
+        error: 'Payload Too Large',
+      }),
+    );
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps other body-parser client errors at their own status (415)', () => {
+    const { host, response } = buildHost();
+
+    new HttpExceptionFilter().catch(
+      bodyParserError(
+        415,
+        'unsupported charset "UTF-7"',
+        'charset.unsupported',
+      ),
+      host,
+    );
+
+    expect(response.status).toHaveBeenCalledWith(415);
+  });
+
+  it('still treats plain errors that merely carry a status as 500', () => {
+    const { host, response } = buildHost();
+    const error = Object.assign(new Error('boom'), { status: 404 });
+
+    new HttpExceptionFilter().catch(error, host);
+
+    expect(response.status).toHaveBeenCalledWith(500);
+    expect(errorSpy).toHaveBeenCalled();
+  });
 });
