@@ -6,6 +6,8 @@ import {
   ADMIN_LOG_PERSONAL_DATA_RETENTION_DAYS,
   ANSWERED_INQUIRY_RETENTION_DAYS,
   DAY_MS,
+  RESTRICTION_PERSONAL_DATA_RETENTION_DAYS,
+  SCRUBBED_RESTRICTION_REASON,
   UNVERIFIED_ACCOUNT_TTL_DAYS,
   WITHDRAWN_EMAIL_BLOCK_DAYS,
 } from '../common/constants/retention.constant';
@@ -23,6 +25,7 @@ export const RETENTION_JOB_IDS = [
   'withdrawn-emails',
   'answered-inquiries',
   'admin-log-scrub',
+  'restriction-scrub',
 ] as const;
 export type RetentionJobId = (typeof RETENTION_JOB_IDS)[number];
 
@@ -115,6 +118,7 @@ export class RetentionService {
       'withdrawn-emails': (n, d) => this.deleteExpiredWithdrawnEmails(n, d),
       'answered-inquiries': (n, d) => this.deleteAnsweredInquiries(n, d),
       'admin-log-scrub': (n, d) => this.scrubAdminLogPersonalData(n, d),
+      'restriction-scrub': (n, d) => this.scrubRestrictionPersonalData(n, d),
     };
     const disabled = this.getDisabledJobs();
     const jobs = {} as Record<RetentionJobId, RetentionJobOutcome>;
@@ -299,6 +303,37 @@ export class RetentionService {
             beforeValue: null,
             afterValue: null,
           },
+        }),
+    );
+  }
+
+  // 이용 제한 기록: 해제 후 1년이 지나면 사유·해제 사유를 파기한다(행과 회원
+  // id·기간·조치 관리자는 남긴다 — admin-log-scrub과 같은 방식). 기간이 끝나도
+  // 자동 해제되지 않으므로(liftedAt이 null이면 아직 제한 중) 해제된 기록만 대상이다.
+  async scrubRestrictionPersonalData(
+    now: Date,
+    dryRun: boolean,
+  ): Promise<RetentionJobSummary> {
+    const where: Prisma.UserRestrictionWhereInput = {
+      liftedAt: {
+        lte: new Date(
+          now.getTime() - RESTRICTION_PERSONAL_DATA_RETENTION_DAYS * DAY_MS,
+        ),
+      },
+      OR: [
+        { reason: { not: SCRUBBED_RESTRICTION_REASON } },
+        { liftedReason: { not: null } },
+      ],
+    };
+    return this.deleteWhere(
+      'restriction-scrub',
+      `해제 후 ${RESTRICTION_PERSONAL_DATA_RETENTION_DAYS}일 지난 이용 제한 기록의 사유`,
+      dryRun,
+      () => this.prisma.userRestriction.count({ where }),
+      () =>
+        this.prisma.userRestriction.updateMany({
+          where,
+          data: { reason: SCRUBBED_RESTRICTION_REASON, liftedReason: null },
         }),
     );
   }

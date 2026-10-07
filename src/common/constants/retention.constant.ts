@@ -14,4 +14,11 @@ export const ANSWERED_INQUIRY_RETENTION_DAYS = 365;
 // 개인정보가 들어갈 수 있는 필드만 비운다.
 export const ADMIN_LOG_PERSONAL_DATA_RETENTION_DAYS = 365;
 
+// 이용 제한 기록: 해제(liftedAt) 후 이 기간이 지나면 사유 등 식별 정보를 파기한다.
+// 기록 자체(누가·언제·얼마나 제한됐는지)는 남긴다.
+export const RESTRICTION_PERSONAL_DATA_RETENTION_DAYS = 365;
+
+// UserRestriction.reason은 NOT NULL이라 null 대신 이 문구로 덮어쓴다.
+export const SCRUBBED_RESTRICTION_REASON = '(보관 기간이 지나 파기됨)';
+
 export const DAY_MS = 24 * 60 * 60 * 1000;

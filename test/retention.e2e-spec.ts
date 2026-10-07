@@ -157,9 +157,35 @@ describeIfIsolatedDb('RetentionService (e2e, isolated DB)', () => {
       });
     ids.logOld = (await log(ago(366))).id;
     ids.logNew = (await log(ago(364))).id;
+
+    const restriction = (data: Record<string, unknown>) =>
+      prisma.userRestriction.create({
+        data: {
+          userId: ids.respondent,
+          createdByAdminId: ids.admin,
+          reason: '욕설 신고 누적',
+          durationDays: 7,
+          startedAt: ago(500),
+          ...data,
+        },
+      });
+    ids.restrictLiftedOld = (
+      await restriction({ liftedAt: ago(366), liftedReason: '소명 확인' })
+    ).id;
+    ids.restrictLiftedNew = (
+      await restriction({ liftedAt: ago(364), liftedReason: '소명 확인' })
+    ).id;
+    // 기간은 끝났지만 해제되지 않음(자동 해제가 없어 여전히 제한 중) — 유지
+    ids.restrictExpiredNotLifted = (await restriction({ endsAt: ago(400) })).id;
+    ids.restrictPermanent = (
+      await restriction({ durationDays: null, endsAt: null })
+    ).id;
   });
 
   afterAll(async () => {
+    await prisma.userRestriction.deleteMany({
+      where: { userId: ids.respondent },
+    });
     await prisma.adminActionLog.deleteMany({
       where: { id: { in: [ids.logOld, ids.logNew] } },
     });
@@ -228,6 +254,10 @@ describeIfIsolatedDb('RetentionService (e2e, isolated DB)', () => {
       logNew: await prisma.adminActionLog.findUniqueOrThrow({
         where: { id: ids.logNew },
       }),
+      restrictions: await prisma.userRestriction.findMany({
+        where: { userId: ids.respondent },
+        orderBy: { id: 'asc' },
+      }),
     };
   }
 
@@ -289,6 +319,25 @@ describeIfIsolatedDb('RetentionService (e2e, isolated DB)', () => {
       beforeValue: '옛닉네임',
       afterValue: '회원1234',
     });
+
+    // 이용 제한: 해제 후 1년 지난 기록만 사유 파기, 행·기간·조치자는 유지
+    const byId = new Map(after.restrictions.map((r) => [r.id, r]));
+    expect(byId.get(ids.restrictLiftedOld)).toMatchObject({
+      reason: '(보관 기간이 지나 파기됨)',
+      liftedReason: null,
+      durationDays: 7,
+      userId: ids.respondent,
+      createdByAdminId: ids.admin,
+    });
+    expect(byId.get(ids.restrictLiftedOld)?.liftedAt).not.toBeNull();
+    for (const kept of [
+      ids.restrictLiftedNew,
+      ids.restrictExpiredNotLifted,
+      ids.restrictPermanent,
+    ]) {
+      expect(byId.get(kept)?.reason).toBe('욕설 신고 누적');
+    }
+    expect(byId.get(ids.restrictLiftedNew)?.liftedReason).toBe('소명 확인');
   });
 
   it('skips a second run on the same KST day', async () => {

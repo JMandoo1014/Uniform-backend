@@ -21,6 +21,7 @@ function buildPrisma() {
     withdrawnEmail: model(),
     inquiry: model(),
     adminActionLog: model(),
+    userRestriction: model(),
     $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   };
   return prisma;
@@ -81,6 +82,7 @@ describe('RetentionService', () => {
       expect(prisma[name].deleteMany).not.toHaveBeenCalled();
     }
     expect(prisma.adminActionLog.updateMany).not.toHaveBeenCalled();
+    expect(prisma.userRestriction.updateMany).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(prisma.scheduledJobRun.update).toHaveBeenCalled();
   });
@@ -96,6 +98,7 @@ describe('RetentionService', () => {
     expect(prisma.withdrawnEmail.deleteMany).toHaveBeenCalled();
     expect(prisma.inquiry.deleteMany).toHaveBeenCalled();
     expect(prisma.adminActionLog.updateMany).toHaveBeenCalled();
+    expect(prisma.userRestriction.updateMany).toHaveBeenCalled();
     expect(prisma.scheduledJobRun.update).toHaveBeenCalledWith({
       where: {
         jobName_runDate: {
