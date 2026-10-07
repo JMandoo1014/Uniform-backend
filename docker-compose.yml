@@ -1,5 +1,14 @@
+# 컨테이너 로그(접속 IP·User-Agent가 담기는 nginx 접근 로그 포함)가 무한히
+# 쌓이지 않게 서비스당 최대 10MB × 5개(50MB)까지만 보관한다.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
+    logging: *default-logging
     image: postgres:15
     container_name: uniform-postgres
     restart: unless-stopped

@@ -123,7 +123,9 @@ enum NotificationType {
 model User {
   id                 String            @id @default(uuid())
   email              String?           @unique
-  passwordHash       String
+  // 탈퇴 시 null로 비운다(2.5 개인정보 즉시 삭제) — null이면 어떤 비밀번호로도
+  // 로그인·본인 확인이 안 된다.
+  passwordHash       String?
   nickname           String?           @unique
   gender             Gender?
   grade              GradeLevel?
@@ -573,16 +575,34 @@ model UserRestriction {
 // SetNull로 둔다(다른 사용자 소유 테이블들의 일반적인 Cascade와 다르게 판단한
 // 부분 — 지원 티켓 성격상 작성자 탈퇴 후에도 관리자가 문의 이력을 봐야 함).
 model Inquiry {
-  id        String        @id @default(uuid())
-  userId    String?
-  email     String
-  subject   String
-  message   String
-  status    InquiryStatus @default(PENDING)
-  createdAt DateTime      @default(now())
+  id         String        @id @default(uuid())
+  userId     String?
+  email      String
+  subject    String
+  message    String
+  status     InquiryStatus @default(PENDING)
+  createdAt  DateTime      @default(now())
+  // 관리자가 ANSWERED로 바꾼 시각(PENDING으로 되돌리면 null). 처리 완료 후
+  // 보유 기간이 지나면 정리 배치가 지우는 기준 시각.
+  answeredAt DateTime?
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
   @@map("inquiries")
+}
+
+// 하루 한 번만 돌아야 하는 예약 작업(개인정보 정리 배치 등)의 실행 기록.
+// 여러 인스턴스가 같은 시각에 깨어나도 (jobName, runDate) 행을 먼저 만든
+// 쪽만 실행하고 나머지는 unique 충돌로 건너뛴다.
+model ScheduledJobRun {
+  jobName    String
+  // KST 기준 날짜(yyyy-mm-dd)
+  runDate    String
+  dryRun     Boolean
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@id([jobName, runDate])
+  @@map("scheduled_job_runs")
 }
