@@ -32,11 +32,13 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # 컨테이너 안에서는 compose 네트워크의 nginx가 app:3000으로 붙어야 하므로 모든
+      # 인터페이스에서 받는다(앱 기본값은 127.0.0.1). 호스트에는 여전히 publish하지 않는다.
+      HOST: 0.0.0.0
     depends_on:
       postgres:
         condition: service_healthy
-    # 호스트에 포트를 publish하지 않는다(ports 금지) — 같은 compose 네트워크의
-    # nginx만 app:3000으로 접근한다. 외부에 열리는 포트는 nginx의 80/443뿐.
     expose:
       - "3000"
 
@@ -46,12 +48,8 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      # Cloudflare Origin 인증서(origin.pem)와 키(origin.key). 서버에 먼저 두지
-      # 않으면 nginx가 뜨지 않아 80까지 함께 끊긴다.
-      - /etc/uniform/ssl:/etc/nginx/ssl:ro
     depends_on:
       - app
 
