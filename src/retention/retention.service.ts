@@ -6,6 +6,9 @@ import {
   ADMIN_LOG_PERSONAL_DATA_RETENTION_DAYS,
   ANSWERED_INQUIRY_RETENTION_DAYS,
   DAY_MS,
+  NOTIFICATION_RETENTION_DAYS,
+  RESTRICTION_PERSONAL_DATA_RETENTION_DAYS,
+  SCRUBBED_TEXT,
   UNVERIFIED_ACCOUNT_TTL_DAYS,
   WITHDRAWN_EMAIL_BLOCK_DAYS,
 } from '../common/constants/retention.constant';
@@ -23,6 +26,8 @@ export const RETENTION_JOB_IDS = [
   'withdrawn-emails',
   'answered-inquiries',
   'admin-log-scrub',
+  'restriction-scrub',
+  'notification-purge',
 ] as const;
 export type RetentionJobId = (typeof RETENTION_JOB_IDS)[number];
 
@@ -115,6 +120,8 @@ export class RetentionService {
       'withdrawn-emails': (n, d) => this.deleteExpiredWithdrawnEmails(n, d),
       'answered-inquiries': (n, d) => this.deleteAnsweredInquiries(n, d),
       'admin-log-scrub': (n, d) => this.scrubAdminLogPersonalData(n, d),
+      'restriction-scrub': (n, d) => this.scrubRestrictionPersonalData(n, d),
+      'notification-purge': (n, d) => this.deleteOldNotifications(n, d),
     };
     const disabled = this.getDisabledJobs();
     const jobs = {} as Record<RetentionJobId, RetentionJobOutcome>;
@@ -265,41 +272,99 @@ export class RetentionService {
     );
   }
 
-  // d-2. Spec 10.1 "기록하고 지우지 않는다" — 행은 남기고(조치자·시각·대상
-  // id·사유), 당시 닉네임·문의 제목·추첨 대상 닉네임 등이 들어가는
-  // targetName/memo/beforeValue/afterValue만 비운다.
+  // d-2. 관리자 조치 기록: 조치 후 1년이 지나면 조치 종류(action)·일시·관리자
+  // id·대상 종류/id만 남기고, 대상 이름(당시 닉네임·문의 제목 등)·사유·메모·
+  // 변경 전후 값은 파기 문구로 덮어쓴다(명세 10.1 "지우지 않는다"를 바꾼 기준).
+  // 원래 비어 있던 필드는 그대로 둬서 "내용이 있었다"는 오해를 만들지 않는다.
   async scrubAdminLogPersonalData(
     now: Date,
     dryRun: boolean,
   ): Promise<RetentionJobSummary> {
+    const createdAt = {
+      lte: new Date(
+        now.getTime() - ADMIN_LOG_PERSONAL_DATA_RETENTION_DAYS * DAY_MS,
+      ),
+    };
+    const fields = [
+      'targetName',
+      'reason',
+      'memo',
+      'beforeValue',
+      'afterValue',
+    ] as const;
+    const needsScrub = (field: (typeof fields)[number]) => ({
+      AND: [{ [field]: { not: null } }, { NOT: { [field]: SCRUBBED_TEXT } }],
+    });
     const where: Prisma.AdminActionLogWhereInput = {
-      createdAt: {
-        lte: new Date(
-          now.getTime() - ADMIN_LOG_PERSONAL_DATA_RETENTION_DAYS * DAY_MS,
-        ),
-      },
-      OR: [
-        { targetName: { not: null } },
-        { memo: { not: null } },
-        { beforeValue: { not: null } },
-        { afterValue: { not: null } },
-      ],
+      createdAt,
+      OR: fields.map(needsScrub),
     };
     return this.deleteWhere(
       'admin-log-scrub',
-      `${ADMIN_LOG_PERSONAL_DATA_RETENTION_DAYS}일 지난 관리자 조치 기록의 개인정보 필드`,
+      `${ADMIN_LOG_PERSONAL_DATA_RETENTION_DAYS}일 지난 관리자 조치 기록의 대상 이름·사유·메모·변경 전후 값`,
       dryRun,
       () => this.prisma.adminActionLog.count({ where }),
+      async () => {
+        const rows = await this.prisma.adminActionLog.count({ where });
+        await this.prisma.$transaction(
+          fields.map((field) =>
+            this.prisma.adminActionLog.updateMany({
+              where: { createdAt, ...needsScrub(field) },
+              data: { [field]: SCRUBBED_TEXT },
+            }),
+          ),
+        );
+        return { count: rows };
+      },
+    );
+  }
+
+  // 이용 제한 기록: 해제 후 1년이 지나면 사유·해제 사유를 파기한다(행과 회원
+  // id·기간·조치 관리자는 남긴다 — admin-log-scrub과 같은 방식). 기간이 끝나도
+  // 자동 해제되지 않으므로(liftedAt이 null이면 아직 제한 중) 해제된 기록만 대상이다.
+  async scrubRestrictionPersonalData(
+    now: Date,
+    dryRun: boolean,
+  ): Promise<RetentionJobSummary> {
+    const where: Prisma.UserRestrictionWhereInput = {
+      liftedAt: {
+        lte: new Date(
+          now.getTime() - RESTRICTION_PERSONAL_DATA_RETENTION_DAYS * DAY_MS,
+        ),
+      },
+      OR: [{ reason: { not: SCRUBBED_TEXT } }, { liftedReason: { not: null } }],
+    };
+    return this.deleteWhere(
+      'restriction-scrub',
+      `해제 후 ${RESTRICTION_PERSONAL_DATA_RETENTION_DAYS}일 지난 이용 제한 기록의 사유`,
+      dryRun,
+      () => this.prisma.userRestriction.count({ where }),
       () =>
-        this.prisma.adminActionLog.updateMany({
+        this.prisma.userRestriction.updateMany({
           where,
-          data: {
-            targetName: null,
-            memo: null,
-            beforeValue: null,
-            afterValue: null,
-          },
+          data: { reason: SCRUBBED_TEXT, liftedReason: null },
         }),
+    );
+  }
+
+  // 알림: 발송(생성) 후 1년이 지나면 삭제한다. 알림 문구에는 이용 제한 사유처럼
+  // 관리자가 쓴 내용이 들어갈 수 있다. 대시보드 최근 활동도 이 테이블을 읽으므로
+  // 1년보다 오래된 활동은 함께 사라진다.
+  async deleteOldNotifications(
+    now: Date,
+    dryRun: boolean,
+  ): Promise<RetentionJobSummary> {
+    const where: Prisma.NotificationWhereInput = {
+      createdAt: {
+        lte: new Date(now.getTime() - NOTIFICATION_RETENTION_DAYS * DAY_MS),
+      },
+    };
+    return this.deleteWhere(
+      'notification-purge',
+      `발송 후 ${NOTIFICATION_RETENTION_DAYS}일 지난 알림`,
+      dryRun,
+      () => this.prisma.notification.count({ where }),
+      () => this.prisma.notification.deleteMany({ where }),
     );
   }
 
