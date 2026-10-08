@@ -51,7 +51,7 @@ describeIfIsolatedDb('RetentionService (e2e, isolated DB)', () => {
           email: `ret-${tag}-${s}@example.com`,
           nickname: `r${tag}${s}`.slice(0, 12),
           passwordHash: 'x',
-          agreedTermsVersion: 'v1',
+          agreedTermsVersion: '2026-09-01',
           ...data,
         },
       });

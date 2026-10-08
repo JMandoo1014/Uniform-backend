@@ -134,6 +134,9 @@ model User {
   marketingOptIn     Boolean           @default(false)
   status             UserStatus        @default(PENDING_VERIFICATION)
   agreedTermsVersion String
+  // Spec 2.1: 약관에 동의한 시각(가입 또는 재동의). agreedTermsVersion과 함께
+  // 갱신된다. 이 컬럼 도입 전 회원은 가입 시각으로 채웠다.
+  termsAgreedAt      DateTime          @default(now())
   // Spec 10.1: admin accounts are granted by the dev team, not self-service signup.
   isAdmin            Boolean           @default(false)
   // Spec 6.3/11: 운영팀 구성원 계정은 리더보드에서 숨기고 보상 대상에서 뺀다.

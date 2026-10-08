@@ -7,10 +7,11 @@ import {
   HttpStatus,
   NotFoundException,
   Patch,
+  Post,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { UserStatus } from '@prisma/client';
+import { User, UserStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/types/jwt-payload.type';
@@ -33,11 +34,19 @@ export class UserController {
     if (!user) {
       throw new NotFoundException('사용자를 찾을 수 없습니다.');
     }
-    const restriction =
-      user.status === UserStatus.RESTRICTED
-        ? await this.userService.findActiveRestriction(user.id)
-        : null;
-    return new UserResponseDto(user, restriction);
+    return this.toMe(user);
+  }
+
+  // Spec 2.1: 바뀐 약관에 다시 동의. 본문은 받지 않고(보내도 무시) 서버의 현재
+  // 약관 버전과 지금 시각으로 기록한다. 재동의 전에도 호출할 수 있어야 하므로
+  // 별도 제한 없이 로그인만 요구한다.
+  @HttpCode(HttpStatus.OK)
+  @Post('me/terms-consent')
+  async agreeToTerms(
+    @CurrentUser() jwtUser: JwtPayload,
+  ): Promise<UserResponseDto> {
+    const user = await this.userService.agreeToCurrentTerms(jwtUser.sub);
+    return this.toMe(user);
   }
 
   @Patch('me')
@@ -46,7 +55,7 @@ export class UserController {
     @Body() dto: UpdateProfileDto,
   ): Promise<UserResponseDto> {
     const user = await this.userService.updateProfile(jwtUser.sub, dto);
-    return new UserResponseDto(user);
+    return this.toMe(user);
   }
 
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -71,12 +80,24 @@ export class UserController {
       jwtUser.sub,
       dto.marketingOptIn,
     );
-    return new UserResponseDto(user);
+    return this.toMe(user);
   }
 
   @HttpCode(HttpStatus.NO_CONTENT)
   @Delete('me')
   async withdraw(@CurrentUser() jwtUser: JwtPayload): Promise<void> {
     await this.userService.withdraw(jwtUser.sub);
+  }
+
+  private async toMe(user: User): Promise<UserResponseDto> {
+    const restriction =
+      user.status === UserStatus.RESTRICTED
+        ? await this.userService.findActiveRestriction(user.id)
+        : null;
+    return new UserResponseDto(
+      user,
+      this.userService.getCurrentTermsVersion(),
+      restriction,
+    );
   }
 }

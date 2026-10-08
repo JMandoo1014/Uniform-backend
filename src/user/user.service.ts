@@ -19,6 +19,7 @@ import {
   WITHDRAWN_EMAIL_BLOCK_DAYS,
 } from '../common/constants/retention.constant';
 import { hmacEmail, legacySha256Email } from '../common/utils/email-hash.util';
+import { isValidTermsVersion } from '../common/validators/terms-version.validator';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
@@ -27,8 +28,10 @@ const SURVEY_PURGE_AFTER_MS = 30 * DAY_MS;
 
 @Injectable()
 export class UserService {
-  // 없으면 가입·탈퇴가 동작할 수 없으므로 부팅 시점에 바로 실패시킨다.
+  // 둘 다 없으면 가입·탈퇴·약관 동의가 동작할 수 없으므로 부팅 시점에 바로
+  // 실패시킨다.
   private readonly withdrawnEmailSecret: string;
+  private readonly currentTermsVersion: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -37,6 +40,18 @@ export class UserService {
     this.withdrawnEmailSecret = configService.getOrThrow<string>(
       'WITHDRAWN_EMAIL_HMAC_SECRET',
     );
+    const termsVersion = configService.getOrThrow<string>('TERMS_VERSION');
+    if (!isValidTermsVersion(termsVersion)) {
+      throw new Error(
+        `TERMS_VERSION must be the current terms effective date in YYYY-MM-DD form (got "${termsVersion}")`,
+      );
+    }
+    this.currentTermsVersion = termsVersion;
+  }
+
+  // Spec 2.1: 현재 시행 중인 약관 버전(시행일).
+  getCurrentTermsVersion(): string {
+    return this.currentTermsVersion;
   }
 
   hashWithdrawnEmail(email: string): string {
@@ -267,6 +282,25 @@ export class UserService {
     return this.prisma.user.update({
       where: { id: userId },
       data: { marketingOptIn, marketingOptInChangedAt: new Date() },
+    });
+  }
+
+  // Spec 2.1: 약관이 바뀐 뒤 다시 동의받는다. 어떤 버전에 동의했는지는
+  // 클라이언트가 보낸 값이 아니라 서버의 현재 버전으로 기록한다.
+  async agreeToCurrentTerms(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    }
+    if (user.status === UserStatus.WITHDRAWN) {
+      throw new AccountWithdrawnException();
+    }
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        agreedTermsVersion: this.currentTermsVersion,
+        termsAgreedAt: new Date(),
+      },
     });
   }
 

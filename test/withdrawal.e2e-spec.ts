@@ -69,7 +69,7 @@ describe('Withdrawal (e2e)', () => {
       grade: 'NOT_APPLICABLE',
       majorField: 'NOT_APPLICABLE',
       enrollmentStatus: 'NOT_APPLICABLE',
-      agreedTermsVersion: 'v1',
+      agreedTermsVersion: '2026-09-01',
     };
   }
 
