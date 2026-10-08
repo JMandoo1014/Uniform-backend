@@ -76,6 +76,7 @@ export class AuthService {
       enrollmentStatus: dto.enrollmentStatus,
       marketingOptIn: dto.marketingOptIn ?? false,
       agreedTermsVersion: dto.agreedTermsVersion,
+      termsAgreedAt: new Date(),
       status: UserStatus.PENDING_VERIFICATION,
       emailVerificationToken,
       emailVerificationTokenExpiresAt,
