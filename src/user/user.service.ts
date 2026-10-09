@@ -130,15 +130,30 @@ export class UserService {
     });
   }
 
-  async resetPassword(userId: string, passwordHash: string) {
-    return this.prisma.user.update({
-      where: { id: userId },
+  // 재설정 토큰을 소모하면서 비밀번호를 바꾼다. 토큰·만료 조건을 WHERE에 넣은
+  // UPDATE 한 문장이라 비밀번호 변경과 토큰 무효화가 함께 일어나고, 같은 토큰으로
+  // 동시에 들어온 요청은 행 잠금 뒤 조건을 다시 보므로 하나만 count 1을 얻는다.
+  // 재설정 토큰은 회원당 한 칸(passwordResetToken)이라 재요청하면 이전 토큰은
+  // 덮어써져 이미 무효고, 여기서 비우면 그 회원에게 남는 재설정 토큰은 없다.
+  async consumePasswordResetToken(
+    userId: string,
+    token: string,
+    passwordHash: string,
+    now: Date,
+  ): Promise<boolean> {
+    const { count } = await this.prisma.user.updateMany({
+      where: {
+        id: userId,
+        passwordResetToken: token,
+        passwordResetTokenExpiresAt: { gt: now },
+      },
       data: {
         passwordHash,
         passwordResetToken: null,
         passwordResetTokenExpiresAt: null,
       },
     });
+    return count === 1;
   }
 
   async updateStatus(userId: string, status: UserStatus, reason?: string) {

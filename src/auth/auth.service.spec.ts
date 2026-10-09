@@ -2,7 +2,12 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import { UserStatus } from '@prisma/client';
-import { InvalidRefreshTokenException } from '../common/exceptions/business.exception';
+import * as bcrypt from 'bcryptjs';
+import {
+  InvalidPasswordResetTokenException,
+  InvalidRefreshTokenException,
+  SameAsCurrentPasswordException,
+} from '../common/exceptions/business.exception';
 import { UserService } from '../user/user.service';
 import { MailService } from '../mail/mail.service';
 import { AuthService } from './auth.service';
@@ -108,5 +113,101 @@ describe('AuthService.refresh', () => {
       { sub: 'user-1', email: 'a@b.com' },
       expect.objectContaining({ secret: 'access-secret' }),
     );
+  });
+});
+
+describe('AuthService.confirmPasswordReset', () => {
+  const TOKEN = 'a'.repeat(64);
+  let userService: {
+    findByPasswordResetToken: jest.Mock;
+    consumePasswordResetToken: jest.Mock;
+  };
+  let service: AuthService;
+
+  async function userWithPassword(password: string, expiresInMs = 60_000) {
+    return {
+      id: 'user-1',
+      passwordHash: await bcrypt.hash(password, 4),
+      passwordResetTokenExpiresAt: new Date(Date.now() + expiresInMs),
+    };
+  }
+
+  beforeEach(() => {
+    userService = {
+      findByPasswordResetToken: jest.fn(),
+      consumePasswordResetToken: jest.fn().mockResolvedValue(true),
+    };
+    service = new AuthService(
+      userService as never,
+      {} as never,
+      { get: jest.fn() } as never,
+      {} as never,
+    );
+  });
+
+  it('consumes the token atomically with the new password hash', async () => {
+    userService.findByPasswordResetToken.mockResolvedValue(
+      await userWithPassword('OldPass1234!'),
+    );
+
+    await service.confirmPasswordReset({
+      token: TOKEN,
+      newPassword: 'NewPass1234!',
+    });
+
+    const [[userId, token, passwordHash, now]] = userService
+      .consumePasswordResetToken.mock.calls as [[string, string, string, Date]];
+    expect(userId).toBe('user-1');
+    expect(token).toBe(TOKEN);
+    expect(passwordHash).not.toBe('NewPass1234!');
+    expect(now).toBeInstanceOf(Date);
+  });
+
+  it('answers the same invalid-token error when another request consumed the token first', async () => {
+    userService.findByPasswordResetToken.mockResolvedValue(
+      await userWithPassword('OldPass1234!'),
+    );
+    userService.consumePasswordResetToken.mockResolvedValue(false);
+
+    await expect(
+      service.confirmPasswordReset({
+        token: TOKEN,
+        newPassword: 'NewPass1234!',
+      }),
+    ).rejects.toBeInstanceOf(InvalidPasswordResetTokenException);
+  });
+
+  it.each([
+    ['unknown token', null],
+    ['expired token', 'expired'],
+  ])(
+    'rejects an %s with the same invalid-token error',
+    async (_label, kind) => {
+      userService.findByPasswordResetToken.mockResolvedValue(
+        kind === 'expired' ? await userWithPassword('OldPass1234!', -1) : null,
+      );
+
+      await expect(
+        service.confirmPasswordReset({
+          token: TOKEN,
+          newPassword: 'NewPass1234!',
+        }),
+      ).rejects.toBeInstanceOf(InvalidPasswordResetTokenException);
+      expect(userService.consumePasswordResetToken).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects the current password without consuming the token', async () => {
+    userService.findByPasswordResetToken.mockResolvedValue(
+      await userWithPassword('SamePass1234!'),
+    );
+
+    await expect(
+      service.confirmPasswordReset({
+        token: TOKEN,
+        newPassword: 'SamePass1234!',
+      }),
+    ).rejects.toBeInstanceOf(SameAsCurrentPasswordException);
+    expect(userService.consumePasswordResetToken).not.toHaveBeenCalled();
   });
 });
