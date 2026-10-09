@@ -222,7 +222,13 @@ describeIfIsolatedDb('RetentionService (e2e, isolated DB)', () => {
       where: { id: { in: [ids.purgedSurvey, ids.futureSurvey] } },
     });
     await prisma.user.deleteMany({
-      where: { email: { endsWith: `-${s}@example.com` } },
+      // 이 파일이 만든 회원만 id로 지운다 — 이메일 접미사로 지우면 같은
+      // 밀리초에 시작한 다른 e2e 파일(같은 접미사)의 회원까지 지울 수 있다.
+      where: {
+        id: {
+          in: [ids.admin, ids.respondent, ids.pendingOld, ids.pendingNew],
+        },
+      },
     });
     await app.close();
   });

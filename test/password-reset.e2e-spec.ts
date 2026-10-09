@@ -11,6 +11,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 
 const OLD_PASSWORD = 'OldPass1234!';
 const INVALID_TOKEN_MESSAGE = '유효하지 않거나 만료된 재설정 토큰입니다.';
+const INVALID_TOKEN_CODE = 'INVALID_PASSWORD_RESET_TOKEN';
 
 // 실제 DB(DATABASE_URL)를 쓰는 e2e — 메일만 가짜로 바꿔 실제 발송을 막는다.
 // 토큰은 테스트 안에서 DB로만 읽고 출력하지 않는다.
@@ -107,7 +108,10 @@ describe('Password reset (e2e)', () => {
     await confirm(token, 'NewPass1234!').expect(200);
     const second = await confirm(token, 'Other1234!').expect(400);
 
-    expect(second.body).toMatchObject({ message: INVALID_TOKEN_MESSAGE });
+    expect(second.body).toMatchObject({
+      message: INVALID_TOKEN_MESSAGE,
+      code: INVALID_TOKEN_CODE,
+    });
     expect(await loginStatus(email, 'NewPass1234!')).toBe(200);
     expect(await loginStatus(email, 'Other1234!')).toBe(401);
   });
@@ -125,7 +129,10 @@ describe('Password reset (e2e)', () => {
 
     expect(statuses).toEqual([200, 400]);
     const loser = results.find((r) => r.status === 400)!;
-    expect(loser.body).toMatchObject({ message: INVALID_TOKEN_MESSAGE });
+    expect(loser.body).toMatchObject({
+      message: INVALID_TOKEN_MESSAGE,
+      code: INVALID_TOKEN_CODE,
+    });
     const winnerPassword =
       results[0].status === 200 ? 'RaceA1234!' : 'RaceB1234!';
     const loserPassword =
@@ -142,6 +149,7 @@ describe('Password reset (e2e)', () => {
     const res = await confirm(token, OLD_PASSWORD).expect(400);
     expect(res.body).toMatchObject({
       message: '현재 비밀번호와 다른 비밀번호를 입력해주세요',
+      code: 'SAME_AS_CURRENT_PASSWORD',
     });
 
     // 토큰은 그대로 살아 있어 다른 비밀번호로 다시 시도할 수 있다.
@@ -176,6 +184,7 @@ describe('Password reset (e2e)', () => {
     expect(shapes[0]).toEqual({
       statusCode: 400,
       message: INVALID_TOKEN_MESSAGE,
+      code: INVALID_TOKEN_CODE,
       path: '/auth/password/reset-confirm',
     });
     expect(shapes[1]).toEqual(shapes[0]);
@@ -192,7 +201,8 @@ describe('Password reset (e2e)', () => {
     const second = await currentToken(id);
     expect(second).not.toBe(first);
 
-    await confirm(first, 'First1234!').expect(400);
+    const stale = await confirm(first, 'First1234!').expect(400);
+    expect(stale.body).toMatchObject({ code: INVALID_TOKEN_CODE });
     await confirm(second, 'Second1234!').expect(200);
   });
 
