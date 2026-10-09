@@ -68,6 +68,17 @@ export class RecentlyWithdrawnEmailException extends BusinessException {
   }
 }
 
+// 비밀번호 재설정: 새 비밀번호가 지금 비밀번호와 같으면 거부한다(토큰은 소모하지
+// 않아 다른 비밀번호로 다시 시도할 수 있다).
+export class SameAsCurrentPasswordException extends BusinessException {
+  constructor() {
+    super(
+      '현재 비밀번호와 다른 비밀번호를 입력해주세요',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+}
+
 export class InvalidPasswordResetTokenException extends BusinessException {
   constructor() {
     super('유효하지 않거나 만료된 재설정 토큰입니다.', HttpStatus.BAD_REQUEST);

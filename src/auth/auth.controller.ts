@@ -15,8 +15,8 @@ import { AccessTokenResponseDto } from './dto/access-token-response.dto';
 
 // signup/changePendingEmail이 공유하는 응답 모양 — 별도 DTO 클래스 없이 순수
 // 타입 애노테이션 용도로만 쓴다(런타임 로직 변경 없음). emailVerificationToken은
-// 응답에 절대 포함하지 않는다(계정 탈취로 이어지는 보안 이슈였다) — 이메일
-// 발송이 연동되기 전까지는 개발 환경 서버 로그로만 확인한다.
+// 응답에도 로그에도 절대 남기지 않는다(계정 탈취로 이어지는 보안 이슈였다) —
+// 메일로만 전달한다.
 type PendingAccountResponse = {
   id: string;
   email: string | null;

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { UserStatus } from '@prisma/client';
@@ -13,6 +13,7 @@ import {
   EmailNotVerifiedException,
   InvalidCredentialsException,
   InvalidPasswordResetTokenException,
+  SameAsCurrentPasswordException,
   InvalidRefreshTokenException,
   InvalidVerificationTokenException,
   NicknameAlreadyExistsException,
@@ -34,8 +35,6 @@ import { JwtPayload } from './types/jwt-payload.type';
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
-
   constructor(
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
@@ -91,11 +90,6 @@ export class AuthService {
       dto.email,
       emailVerificationToken,
       emailVerificationTokenExpiresAt,
-    );
-    this.logDevOnlyToken(
-      'signup emailVerificationToken',
-      user.email,
-      emailVerificationToken,
     );
     return {
       id: user.id,
@@ -208,22 +202,39 @@ export class AuthService {
     const { token, expiresAt } = this.buildPasswordResetToken();
     await this.userService.setPasswordResetToken(user.id, token, expiresAt);
     await this.mailService.sendPasswordReset(dto.email, token, expiresAt);
-    this.logDevOnlyToken('password resetToken', user.email, token);
   }
 
+  // 없는·만료된·이미 쓴 토큰과 동시 요청에서 진 쪽은 모두 같은 예외(같은 400
+  // 응답)로 끝나서, 응답만으로는 토큰이 있었는지 구분할 수 없다.
   async confirmPasswordReset(dto: PasswordResetConfirmDto): Promise<void> {
+    const now = new Date();
     const user = await this.userService.findByPasswordResetToken(dto.token);
 
     if (
       !user ||
       !user.passwordResetTokenExpiresAt ||
-      user.passwordResetTokenExpiresAt.getTime() < Date.now()
+      user.passwordResetTokenExpiresAt.getTime() <= now.getTime()
     ) {
       throw new InvalidPasswordResetTokenException();
     }
 
+    if (
+      user.passwordHash !== null &&
+      (await bcrypt.compare(dto.newPassword, user.passwordHash))
+    ) {
+      throw new SameAsCurrentPasswordException();
+    }
+
     const passwordHash = await bcrypt.hash(dto.newPassword, BCRYPT_SALT_ROUNDS);
-    await this.userService.resetPassword(user.id, passwordHash);
+    const consumed = await this.userService.consumePasswordResetToken(
+      user.id,
+      dto.token,
+      passwordHash,
+      now,
+    );
+    if (!consumed) {
+      throw new InvalidPasswordResetTokenException();
+    }
   }
 
   // Spec 2.2: "인증 대기: ... 재발송과 가입 이메일 변경만 가능하다." 로그인
@@ -272,29 +283,11 @@ export class AuthService {
       token,
       expiresAt,
     );
-    this.logDevOnlyToken(
-      'pending-email-change emailVerificationToken',
-      updated.email,
-      token,
-    );
     return {
       id: updated.id,
       email: updated.email,
       status: updated.status,
     };
-  }
-
-  // 이메일 발송 연동 전까지 개발/테스트 환경에서만 토큰을 확인할 수 있게
-  // 서버 로그에 남긴다 — 어떤 환경에서도 응답 바디에는 넣지 않는다.
-  private logDevOnlyToken(
-    label: string,
-    email: string | null,
-    token: string,
-  ): void {
-    if (this.configService.get<string>('NODE_ENV') === 'production') {
-      return;
-    }
-    this.logger.debug(`[dev-only] ${label} for ${email}: ${token}`);
   }
 
   private buildPasswordResetToken(): { token: string; expiresAt: Date } {
