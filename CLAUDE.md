@@ -38,7 +38,18 @@
 
 다른 사람 담당 도메인의 모듈 구조나 기존 API 계약을 바꿔야 할 일이 생기면, 마음대로 바꾸지 말고 먼저 사용자에게 "이건 원래 반대편(지호/기찬) 담당 영역인데 바꿔도 되는지" 확인할 것. `schema.prisma`는 두 도메인이 공유하므로 특히 조심 — 다른 도메인이 이미 쓰고 있는 모델/필드를 건드릴 땐 반드시 먼저 확인.
 
-브랜치는 Git Flow: `main`(초기 세팅용 스캐폴드만) → `develop`(통합) → `feature/*`(도메인별 작업). `develop`/`main`은 브랜치 보호 규칙으로 PR 없이 직접 push가 막혀 있다.
+## 브랜치와 배포 환경
+
+같은 서버, 같은 postgres 컨테이너(`uniform-postgres`)에 운영과 개발을 함께 띄운다. 서버 구성 절차는 `docs/dev-server-runbook.md`.
+
+| 브랜치 | 환경 | 배포 | 도메인 | DB |
+|---|---|---|---|---|
+| `main` | 운영 | `deploy.sh` (`~/Uniform-backend`, PM2 `uniform-backend`, 127.0.0.1:3000) | `api.uniform-app.com` | `uniform_dev` |
+| `develop` | 개발 | `deploy-dev.sh` (`~/Uniform-backend-dev`, PM2 `uniform-backend-dev`, 127.0.0.1:3001) | `api-dev.uniform-app.com` | `uniform_staging` |
+
+⚠️ 운영 DB 이름이 `uniform_dev`인 건 처음에 개발용 compose로 운영 DB를 만든 역사적 이유다(개발 DB가 아니다). 이름만 보고 개발 DB로 착각하지 말 것.
+
+작업 흐름: 기능 브랜치(`feature/*`, `fix/*` 등) → `develop` PR → 개발 서버(`deploy-dev.sh`, api-dev)에서 확인 → `develop`에서 `main`으로 PR → 운영 서버에서 `deploy.sh`. `develop`/`main`은 브랜치 보호 규칙으로 PR 없이 직접 push가 막혀 있다.
 
 ## 아키텍처 원칙
 
