@@ -11,6 +11,7 @@ import {
 import { UserService } from '../user/user.service';
 import { MailService } from '../mail/mail.service';
 import { AuthService } from './auth.service';
+import { TokenService } from './token.service';
 
 describe('AuthService.refresh', () => {
   let service: AuthService;
@@ -41,6 +42,7 @@ describe('AuthService.refresh', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
+        TokenService,
         { provide: UserService, useValue: userService },
         { provide: JwtService, useValue: jwtService },
         { provide: ConfigService, useValue: configService },
@@ -180,6 +182,7 @@ describe('AuthService.confirmPasswordReset', () => {
       userService as never,
       {} as never,
       { get: jest.fn() } as never,
+      {} as never,
       {} as never,
     );
   });

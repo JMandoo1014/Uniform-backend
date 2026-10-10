@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { JwtService, JwtSignOptions } from '@nestjs/jwt';
+import { JwtService } from '@nestjs/jwt';
 import { UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
@@ -30,6 +30,7 @@ import { PasswordResetConfirmDto } from './dto/password-reset-confirm.dto';
 import { ChangePendingEmailDto } from './dto/change-pending-email.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
+import { TokenService } from './token.service';
 import { AccessTokenResponseDto } from './dto/access-token-response.dto';
 import { JwtPayload } from './types/jwt-payload.type';
 import { isIssuedBeforePasswordChange } from './password-change.util';
@@ -41,6 +42,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
+    private readonly tokenService: TokenService,
   ) {}
 
   async signup(dto: SignupDto) {
@@ -162,16 +164,10 @@ export class AuthService {
       throw new InvalidRefreshTokenException();
     }
 
-    const accessToken = await this.jwtService.signAsync(
-      { sub: user.id, email: payload.email },
-      {
-        secret: this.configService.getOrThrow<string>('JWT_SECRET'),
-        expiresIn: this.configService.get<string>(
-          'JWT_EXPIRES_IN',
-          '15m',
-        ) as JwtSignOptions['expiresIn'],
-      },
-    );
+    const accessToken = await this.tokenService.signAccessToken({
+      sub: user.id,
+      email: payload.email,
+    });
 
     return { accessToken };
   }
@@ -317,24 +313,7 @@ export class AuthService {
     };
   }
 
-  private async issueTokens(payload: JwtPayload): Promise<TokenResponseDto> {
-    const [accessToken, refreshToken] = await Promise.all([
-      this.jwtService.signAsync(payload, {
-        secret: this.configService.getOrThrow<string>('JWT_SECRET'),
-        expiresIn: this.configService.get<string>(
-          'JWT_EXPIRES_IN',
-          '15m',
-        ) as JwtSignOptions['expiresIn'],
-      }),
-      this.jwtService.signAsync(payload, {
-        secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
-        expiresIn: this.configService.get<string>(
-          'JWT_REFRESH_EXPIRES_IN',
-          '7d',
-        ) as JwtSignOptions['expiresIn'],
-      }),
-    ]);
-
-    return { accessToken, refreshToken };
+  private issueTokens(payload: JwtPayload): Promise<TokenResponseDto> {
+    return this.tokenService.issueTokens(payload);
   }
 }

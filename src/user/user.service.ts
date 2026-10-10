@@ -13,6 +13,7 @@ import {
   CurrentPasswordMismatchException,
   NicknameAlreadyExistsException,
   NoProfileChangesException,
+  SameAsCurrentPasswordException,
 } from '../common/exceptions/business.exception';
 import {
   DAY_MS,
@@ -81,10 +82,10 @@ export class UserService {
   }
 
   // 토큰 검증용 — 매 인증 요청마다 불리므로 필요한 컬럼만 읽는다.
-  findPasswordChangedAt(id: string) {
+  findTokenCheckState(id: string) {
     return this.prisma.user.findUnique({
       where: { id },
-      select: { passwordChangedAt: true },
+      select: { passwordChangedAt: true, status: true },
     });
   }
 
@@ -286,11 +287,15 @@ export class UserService {
   }
 
   // Spec 2.4: 마이페이지에서 현재 비밀번호를 확인한 뒤 바꾼다.
+  // 마이페이지 비밀번호 변경. 현재 비밀번호 확인 → 같은 비밀번호 거부 → 새 해시와
+  // passwordChangedAt을 한 UPDATE로 기록한다. 이 시각보다 먼저 발급된 토큰(다른
+  // 기기 포함)은 401이 되므로, 호출한 쪽(UserController)이 이 뒤에 새 토큰을
+  // 발급해 요청한 기기의 로그인을 유지한다.
   async changePassword(
     userId: string,
     currentPassword: string,
     newPassword: string,
-  ): Promise<void> {
+  ) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('사용자를 찾을 수 없습니다.');
@@ -302,11 +307,14 @@ export class UserService {
     if (!matches) {
       throw new CurrentPasswordMismatchException();
     }
+    if (await bcrypt.compare(newPassword, user.passwordHash!)) {
+      throw new SameAsCurrentPasswordException();
+    }
 
     const passwordHash = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
-    await this.prisma.user.update({
+    return this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash },
+      data: passwordChangeData(passwordHash, new Date()),
     });
   }
 

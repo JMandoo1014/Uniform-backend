@@ -50,6 +50,10 @@ describe('Tokens issued before a password change (e2e)', () => {
   });
 
   afterAll(async () => {
+    // 이용 제한의 조치자(createdByAdminId)는 Restrict FK라 회원보다 먼저 지운다.
+    await prisma.userRestriction.deleteMany({
+      where: { userId: { in: createdUserIds } },
+    });
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
     await app.close();
   });
@@ -189,5 +193,160 @@ describe('Tokens issued before a password change (e2e)', () => {
     expect(stored.passwordChangedAt).toBeNull();
     await me(tokens.accessToken).expect(200);
     await refresh(tokens.refreshToken).expect(200);
+  });
+
+  const changePassword = (
+    accessToken: string,
+    currentPassword: string,
+    newPassword: string,
+  ) =>
+    request(app.getHttpServer())
+      .patch('/users/me/password')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ currentPassword, newPassword });
+
+  it("a withdrawn member's leftover access token gets the usual 401 everywhere, including PATCH /users/me", async () => {
+    const { id, email } = await createActiveUser();
+    const tokens = await login(email, OLD_PASSWORD);
+
+    await request(app.getHttpServer())
+      .delete('/users/me')
+      .set('Authorization', `Bearer ${tokens.accessToken}`)
+      .expect(204);
+
+    const patched = await request(app.getHttpServer())
+      .patch('/users/me')
+      .set('Authorization', `Bearer ${tokens.accessToken}`)
+      .send({ nickname: 'revived1' })
+      .expect(401);
+    const garbage = await me('not-a-jwt').expect(401);
+    expect(shape(patched.body as Record<string, unknown>)).toEqual({
+      ...shape(garbage.body as Record<string, unknown>),
+      path: '/users/me',
+    });
+    await me(tokens.accessToken).expect(401);
+    await refresh(tokens.refreshToken).expect(401);
+
+    const stored = await prisma.user.findUniqueOrThrow({ where: { id } });
+    expect(stored.status).toBe('WITHDRAWN');
+    expect(stored.nickname).toBeNull();
+  });
+
+  it("password change: other devices' tokens get 401, the tokens in the response keep this device signed in", async () => {
+    const { id, email } = await createActiveUser();
+    const deviceA = await login(email, OLD_PASSWORD);
+    const deviceB = await login(email, OLD_PASSWORD);
+
+    await waitForNextSecond();
+    const res = await changePassword(
+      deviceA.accessToken,
+      OLD_PASSWORD,
+      NEW_PASSWORD,
+    ).expect(200);
+    const fresh = res.body as Tokens;
+    expect(Object.keys(fresh).sort()).toEqual(['accessToken', 'refreshToken']);
+
+    // 다른 기기(B)와 요청한 기기의 이전 토큰은 401
+    await me(deviceB.accessToken).expect(401);
+    await refresh(deviceB.refreshToken).expect(401);
+    await me(deviceA.accessToken).expect(401);
+
+    // 응답의 새 토큰은 바로 쓸 수 있다
+    await me(fresh.accessToken).expect(200);
+    await refresh(fresh.refreshToken).expect(200);
+
+    const { passwordChangedAt } = await prisma.user.findUniqueOrThrow({
+      where: { id },
+    });
+    const changedSec = Math.floor(passwordChangedAt!.getTime() / 1000);
+    expect(iatOf(fresh.accessToken)).toBeGreaterThanOrEqual(changedSec);
+    expect(iatOf(fresh.refreshToken)).toBeGreaterThanOrEqual(changedSec);
+  });
+
+  it('the new tokens work even when the change and their issue land in the same second (5 changes in a row)', async () => {
+    const { id, email } = await createActiveUser();
+    let current = OLD_PASSWORD;
+    let tokens = await login(email, current);
+
+    for (let i = 1; i <= 5; i += 1) {
+      const next = `Rotate${i}Pass12!`;
+      const res = await changePassword(
+        tokens.accessToken,
+        current,
+        next,
+      ).expect(200);
+      tokens = res.body as Tokens;
+      current = next;
+
+      await me(tokens.accessToken).expect(200);
+      await refresh(tokens.refreshToken).expect(200);
+      const { passwordChangedAt } = await prisma.user.findUniqueOrThrow({
+        where: { id },
+      });
+      expect(iatOf(tokens.accessToken)).toBeGreaterThanOrEqual(
+        Math.floor(passwordChangedAt!.getTime() / 1000),
+      );
+    }
+  });
+
+  it('wrong current password and same password are 400 with codes, and change nothing', async () => {
+    const { id, email } = await createActiveUser();
+    const tokens = await login(email, OLD_PASSWORD);
+
+    const wrong = await changePassword(
+      tokens.accessToken,
+      'Wrong1234!',
+      NEW_PASSWORD,
+    ).expect(400);
+    expect(shape(wrong.body as Record<string, unknown>)).toEqual({
+      statusCode: 400,
+      message: '현재 비밀번호가 올바르지 않습니다.',
+      code: 'CURRENT_PASSWORD_MISMATCH',
+      path: '/users/me/password',
+    });
+
+    const same = await changePassword(
+      tokens.accessToken,
+      OLD_PASSWORD,
+      OLD_PASSWORD,
+    ).expect(400);
+    expect(same.body).toMatchObject({
+      message: '현재 비밀번호와 다른 비밀번호를 입력해주세요',
+      code: 'SAME_AS_CURRENT_PASSWORD',
+    });
+
+    const stored = await prisma.user.findUniqueOrThrow({ where: { id } });
+    expect(stored.passwordChangedAt).toBeNull();
+    await me(tokens.accessToken).expect(200);
+  });
+
+  it('a restricted member can still log in and use /users/me; publishing is 403; refresh stays rejected (current behavior)', async () => {
+    const { id, email } = await createActiveUser();
+    await prisma.user.update({ where: { id }, data: { status: 'RESTRICTED' } });
+    await prisma.userRestriction.create({
+      data: { userId: id, reason: 'e2e 제한', createdByAdminId: id },
+    });
+
+    const tokens = await login(email, OLD_PASSWORD);
+    const profile = await me(tokens.accessToken).expect(200);
+    expect(profile.body).toMatchObject({
+      status: 'RESTRICTED',
+      restriction: { reason: 'e2e 제한' },
+    });
+
+    const draft = await request(app.getHttpServer())
+      .post('/surveys/drafts')
+      .set('Authorization', `Bearer ${tokens.accessToken}`)
+      .send({ title: 'e2e 제한 회원 초안' })
+      .expect(201);
+    const draftId = (draft.body as { id: string }).id;
+    await request(app.getHttpServer())
+      .post(`/surveys/drafts/${draftId}/publish`)
+      .set('Authorization', `Bearer ${tokens.accessToken}`)
+      .expect(403);
+    await prisma.survey.delete({ where: { id: draftId } });
+
+    // AuthService.refresh는 ACTIVE가 아니면 거부한다(주석에 의도로 적힌 동작).
+    await refresh(tokens.refreshToken).expect(401);
   });
 });

@@ -57,7 +57,11 @@ export class NoProfileChangesException extends BusinessException {
 // InvalidVerificationTokenException)과 같은 400으로 맞춘다.
 export class CurrentPasswordMismatchException extends BusinessException {
   constructor() {
-    super('현재 비밀번호가 올바르지 않습니다.', HttpStatus.BAD_REQUEST);
+    super(
+      '현재 비밀번호가 올바르지 않습니다.',
+      HttpStatus.BAD_REQUEST,
+      'CURRENT_PASSWORD_MISMATCH',
+    );
   }
 }
 

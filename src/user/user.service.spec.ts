@@ -1,6 +1,11 @@
 import { NotFoundException } from '@nestjs/common';
 import { UserStatus } from '@prisma/client';
-import { AccountWithdrawnException } from '../common/exceptions/business.exception';
+import {
+  AccountWithdrawnException,
+  CurrentPasswordMismatchException,
+  SameAsCurrentPasswordException,
+} from '../common/exceptions/business.exception';
+import * as bcrypt from 'bcryptjs';
 import { UserService } from './user.service';
 
 // process.env(Prisma가 .env를 읽어 채울 수 있음)에 기대지 않도록 가짜 설정을 쓴다.
@@ -102,6 +107,72 @@ describe('UserService.agreeToCurrentTerms', () => {
 
     await expect(service.agreeToCurrentTerms('nope')).rejects.toBeInstanceOf(
       NotFoundException,
+    );
+  });
+});
+
+describe('UserService.changePassword', () => {
+  function build(currentPassword: string) {
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'user-1',
+          passwordHash: bcrypt.hashSync(currentPassword, 4),
+        }),
+        update: jest.fn((args: { data: Record<string, unknown> }) =>
+          Promise.resolve({ id: 'user-1', ...args.data }),
+        ),
+      },
+    };
+    const service = new UserService(
+      prisma as never,
+      buildConfig(VALID_ENV) as never,
+    );
+    return { prisma, service };
+  }
+
+  it('rejects a wrong current password with CURRENT_PASSWORD_MISMATCH and changes nothing', async () => {
+    const { prisma, service } = build('OldPass1234!');
+
+    const error = await service
+      .changePassword('user-1', 'Wrong1234!', 'NewPass1234!')
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(CurrentPasswordMismatchException);
+    expect((error as CurrentPasswordMismatchException).getResponse()).toEqual({
+      message: '현재 비밀번호가 올바르지 않습니다.',
+      code: 'CURRENT_PASSWORD_MISMATCH',
+    });
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects the current password as the new one with SAME_AS_CURRENT_PASSWORD', async () => {
+    const { prisma, service } = build('OldPass1234!');
+
+    await expect(
+      service.changePassword('user-1', 'OldPass1234!', 'OldPass1234!'),
+    ).rejects.toBeInstanceOf(SameAsCurrentPasswordException);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('stores the new hash and passwordChangedAt in one update', async () => {
+    const { prisma, service } = build('OldPass1234!');
+    const before = Date.now();
+
+    await service.changePassword('user-1', 'OldPass1234!', 'NewPass1234!');
+
+    const [[args]] = prisma.user.update.mock.calls as [
+      [
+        {
+          where: { id: string };
+          data: { passwordHash: string; passwordChangedAt: Date };
+        },
+      ],
+    ];
+    expect(args.where).toEqual({ id: 'user-1' });
+    expect(args.data.passwordHash).not.toBe('NewPass1234!');
+    expect(args.data.passwordChangedAt.getTime()).toBeGreaterThanOrEqual(
+      before,
     );
   });
 });

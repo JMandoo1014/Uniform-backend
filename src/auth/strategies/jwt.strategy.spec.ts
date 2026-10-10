@@ -1,13 +1,18 @@
 import { UnauthorizedException } from '@nestjs/common';
+import { UserStatus } from '@prisma/client';
 import { JwtStrategy } from './jwt.strategy';
 
 describe('JwtStrategy.validate', () => {
   const changedAt = new Date('2026-10-10T00:00:10.500Z');
   const changedSec = Math.floor(changedAt.getTime() / 1000);
 
-  function build(user: { passwordChangedAt: Date | null } | null) {
+  function build(
+    user: { passwordChangedAt: Date | null; status?: UserStatus } | null,
+  ) {
     const userService = {
-      findPasswordChangedAt: jest.fn().mockResolvedValue(user),
+      findTokenCheckState: jest
+        .fn()
+        .mockResolvedValue(user && { status: UserStatus.ACTIVE, ...user }),
     };
     const config = { getOrThrow: () => 'access-secret' };
     return {
@@ -21,7 +26,7 @@ describe('JwtStrategy.validate', () => {
   it('passes the payload through for a member who never changed their password', async () => {
     const { strategy, userService } = build({ passwordChangedAt: null });
     await expect(strategy.validate(payload(1))).resolves.toEqual(payload(1));
-    expect(userService.findPasswordChangedAt).toHaveBeenCalledWith('user-1');
+    expect(userService.findTokenCheckState).toHaveBeenCalledWith('user-1');
   });
 
   it('rejects an access token issued before the password change with a plain 401', async () => {
@@ -46,4 +51,24 @@ describe('JwtStrategy.validate', () => {
       UnauthorizedException,
     );
   });
+
+  it('rejects any token of a withdrawn member with the same plain 401', async () => {
+    const { strategy } = build({
+      passwordChangedAt: null,
+      status: UserStatus.WITHDRAWN,
+    });
+    const error = await strategy.validate(payload(1)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UnauthorizedException);
+    expect((error as UnauthorizedException).getResponse()).toEqual(
+      new UnauthorizedException().getResponse(),
+    );
+  });
+
+  it.each([UserStatus.RESTRICTED, UserStatus.PENDING_VERIFICATION])(
+    'does not block %s members here (their limits are enforced per feature)',
+    async (status) => {
+      const { strategy } = build({ passwordChangedAt: null, status });
+      await expect(strategy.validate(payload(1))).resolves.toBeDefined();
+    },
+  );
 });
