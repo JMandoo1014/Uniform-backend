@@ -13,6 +13,7 @@ import {
   CurrentPasswordMismatchException,
   NicknameAlreadyExistsException,
   NoProfileChangesException,
+  SameAsCurrentPasswordException,
 } from '../common/exceptions/business.exception';
 import {
   DAY_MS,
@@ -25,6 +26,16 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 
 // Spec 7.4: 마감 시각으로부터 30일 뒤 응답 원문 파기.
 const SURVEY_PURGE_AFTER_MS = 30 * DAY_MS;
+
+// 비밀번호를 바꿀 때 함께 써야 하는 컬럼 묶음. passwordChangedAt보다 먼저(초
+// 단위) 발급된 access·refresh 토큰은 JwtStrategy·AuthService.refresh에서
+// 거부되므로, 비밀번호를 바꾸는 곳은 모두 이 함수로 같은 UPDATE에 넣는다.
+export function passwordChangeData(
+  passwordHash: string,
+  changedAt: Date,
+): Pick<Prisma.UserUpdateInput, 'passwordHash' | 'passwordChangedAt'> {
+  return { passwordHash, passwordChangedAt: changedAt };
+}
 
 @Injectable()
 export class UserService {
@@ -68,6 +79,14 @@ export class UserService {
 
   findById(id: string) {
     return this.prisma.user.findUnique({ where: { id } });
+  }
+
+  // 토큰 검증용 — 매 인증 요청마다 불리므로 필요한 컬럼만 읽는다.
+  findTokenCheckState(id: string) {
+    return this.prisma.user.findUnique({
+      where: { id },
+      select: { passwordChangedAt: true, status: true },
+    });
   }
 
   // 이용 제한 안내 화면용 — 아직 해제되지 않은 가장 최근 제한.
@@ -148,7 +167,7 @@ export class UserService {
         passwordResetTokenExpiresAt: { gt: now },
       },
       data: {
-        passwordHash,
+        ...passwordChangeData(passwordHash, now),
         passwordResetToken: null,
         passwordResetTokenExpiresAt: null,
       },
@@ -268,11 +287,15 @@ export class UserService {
   }
 
   // Spec 2.4: 마이페이지에서 현재 비밀번호를 확인한 뒤 바꾼다.
+  // 마이페이지 비밀번호 변경. 현재 비밀번호 확인 → 같은 비밀번호 거부 → 새 해시와
+  // passwordChangedAt을 한 UPDATE로 기록한다. 이 시각보다 먼저 발급된 토큰(다른
+  // 기기 포함)은 401이 되므로, 호출한 쪽(UserController)이 이 뒤에 새 토큰을
+  // 발급해 요청한 기기의 로그인을 유지한다.
   async changePassword(
     userId: string,
     currentPassword: string,
     newPassword: string,
-  ): Promise<void> {
+  ) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('사용자를 찾을 수 없습니다.');
@@ -284,11 +307,14 @@ export class UserService {
     if (!matches) {
       throw new CurrentPasswordMismatchException();
     }
+    if (await bcrypt.compare(newPassword, user.passwordHash!)) {
+      throw new SameAsCurrentPasswordException();
+    }
 
     const passwordHash = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
-    await this.prisma.user.update({
+    return this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash },
+      data: passwordChangeData(passwordHash, new Date()),
     });
   }
 

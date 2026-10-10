@@ -15,6 +15,8 @@ import { User, UserStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/types/jwt-payload.type';
+import { TokenResponseDto } from '../auth/dto/token-response.dto';
+import { TokenService } from '../auth/token.service';
 import { UserService } from './user.service';
 import { UserResponseDto } from './dto/user-response.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -26,7 +28,10 @@ import { UpdateMarketingOptInDto } from './dto/update-marketing-opt-in.dto';
 @UseGuards(JwtAuthGuard)
 @Controller('users')
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly tokenService: TokenService,
+  ) {}
 
   @Get('me')
   async getMe(@CurrentUser() jwtUser: JwtPayload): Promise<UserResponseDto> {
@@ -58,17 +63,24 @@ export class UserController {
     return this.toMe(user);
   }
 
-  @HttpCode(HttpStatus.NO_CONTENT)
+  // 비밀번호를 바꾸면 그 전에 발급된 토큰(다른 기기 포함)은 401이 된다. 요청한
+  // 기기는 응답의 새 토큰으로 로그인을 유지한다 — 변경 시각을 DB에 기록한 뒤에
+  // 서명하므로 새 토큰의 iat는 항상 그 시각(초 단위) 이상이다.
+  @HttpCode(HttpStatus.OK)
   @Patch('me/password')
   async changePassword(
     @CurrentUser() jwtUser: JwtPayload,
     @Body() dto: ChangePasswordDto,
-  ): Promise<void> {
-    await this.userService.changePassword(
+  ): Promise<TokenResponseDto> {
+    const user = await this.userService.changePassword(
       jwtUser.sub,
       dto.currentPassword,
       dto.newPassword,
     );
+    return this.tokenService.issueTokens({
+      sub: user.id,
+      email: user.email ?? jwtUser.email,
+    });
   }
 
   @Patch('me/marketing-opt-in')
