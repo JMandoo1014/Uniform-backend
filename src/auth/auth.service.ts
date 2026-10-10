@@ -32,6 +32,7 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { AccessTokenResponseDto } from './dto/access-token-response.dto';
 import { JwtPayload } from './types/jwt-payload.type';
+import { isIssuedBeforePasswordChange } from './password-change.util';
 
 @Injectable()
 export class AuthService {
@@ -154,6 +155,10 @@ export class AuthService {
 
     const user = await this.userService.findById(payload.sub);
     if (!user || user.status !== UserStatus.ACTIVE) {
+      throw new InvalidRefreshTokenException();
+    }
+    // 비밀번호를 바꾸기 전에 발급된 refresh 토큰도 다른 무효 토큰과 같은 401.
+    if (isIssuedBeforePasswordChange(payload.iat, user.passwordChangedAt)) {
       throw new InvalidRefreshTokenException();
     }
 

@@ -26,6 +26,16 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 // Spec 7.4: 마감 시각으로부터 30일 뒤 응답 원문 파기.
 const SURVEY_PURGE_AFTER_MS = 30 * DAY_MS;
 
+// 비밀번호를 바꿀 때 함께 써야 하는 컬럼 묶음. passwordChangedAt보다 먼저(초
+// 단위) 발급된 access·refresh 토큰은 JwtStrategy·AuthService.refresh에서
+// 거부되므로, 비밀번호를 바꾸는 곳은 모두 이 함수로 같은 UPDATE에 넣는다.
+export function passwordChangeData(
+  passwordHash: string,
+  changedAt: Date,
+): Pick<Prisma.UserUpdateInput, 'passwordHash' | 'passwordChangedAt'> {
+  return { passwordHash, passwordChangedAt: changedAt };
+}
+
 @Injectable()
 export class UserService {
   // 둘 다 없으면 가입·탈퇴·약관 동의가 동작할 수 없으므로 부팅 시점에 바로
@@ -68,6 +78,14 @@ export class UserService {
 
   findById(id: string) {
     return this.prisma.user.findUnique({ where: { id } });
+  }
+
+  // 토큰 검증용 — 매 인증 요청마다 불리므로 필요한 컬럼만 읽는다.
+  findPasswordChangedAt(id: string) {
+    return this.prisma.user.findUnique({
+      where: { id },
+      select: { passwordChangedAt: true },
+    });
   }
 
   // 이용 제한 안내 화면용 — 아직 해제되지 않은 가장 최근 제한.
@@ -148,7 +166,7 @@ export class UserService {
         passwordResetTokenExpiresAt: { gt: now },
       },
       data: {
-        passwordHash,
+        ...passwordChangeData(passwordHash, now),
         passwordResetToken: null,
         passwordResetTokenExpiresAt: null,
       },

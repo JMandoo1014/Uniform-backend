@@ -94,6 +94,45 @@ describe('AuthService.refresh', () => {
     },
   );
 
+  describe('after a password change', () => {
+    const changedAt = new Date('2026-10-10T00:00:10.500Z');
+    const changedSec = Math.floor(changedAt.getTime() / 1000);
+
+    beforeEach(() => {
+      userService.findById.mockResolvedValue({
+        id: 'user-1',
+        status: UserStatus.ACTIVE,
+        passwordChangedAt: changedAt,
+      });
+      jwtService.signAsync.mockResolvedValue('new-access-token');
+    });
+
+    it('rejects a refresh token issued before the change with the usual 401', async () => {
+      jwtService.verifyAsync.mockResolvedValue({
+        sub: 'user-1',
+        email: 'a@b.com',
+        iat: changedSec - 1,
+      });
+
+      await expect(
+        service.refresh({ refreshToken: 'old-token' }),
+      ).rejects.toBeInstanceOf(InvalidRefreshTokenException);
+      expect(jwtService.signAsync).not.toHaveBeenCalled();
+    });
+
+    it('accepts a refresh token issued in the same second as the change', async () => {
+      jwtService.verifyAsync.mockResolvedValue({
+        sub: 'user-1',
+        email: 'a@b.com',
+        iat: changedSec,
+      });
+
+      await expect(
+        service.refresh({ refreshToken: 'new-token' }),
+      ).resolves.toEqual({ accessToken: 'new-access-token' });
+    });
+  });
+
   it('issues a new accessToken (and does not rotate the refreshToken) for an ACTIVE account', async () => {
     jwtService.verifyAsync.mockResolvedValue({
       sub: 'user-1',
