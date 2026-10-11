@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   Prisma,
   SurveyOwnerType,
@@ -12,21 +13,61 @@ import {
   CurrentPasswordMismatchException,
   NicknameAlreadyExistsException,
   NoProfileChangesException,
+  SameAsCurrentPasswordException,
 } from '../common/exceptions/business.exception';
-import { hashEmail } from '../common/utils/email-hash.util';
+import {
+  DAY_MS,
+  WITHDRAWN_EMAIL_BLOCK_DAYS,
+} from '../common/constants/retention.constant';
+import { hmacEmail, legacySha256Email } from '../common/utils/email-hash.util';
+import { isValidTermsVersion } from '../common/validators/terms-version.validator';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+// Spec 7.4: 마감 시각으로부터 30일 뒤 응답 원문 파기.
+const SURVEY_PURGE_AFTER_MS = 30 * DAY_MS;
 
-// TODO: spec 2.2 — "7일 동안 인증하지 않으면 가입 정보를 지우고 닉네임 선점을
-// 해제한다." No scheduler exists yet; this cleanup is deliberately out of
-// scope here and will be built together with the 30-day survey purge batch
-// (spec 7.4) so both scheduled jobs land at once.
+// 비밀번호를 바꿀 때 함께 써야 하는 컬럼 묶음. passwordChangedAt보다 먼저(초
+// 단위) 발급된 access·refresh 토큰은 JwtStrategy·AuthService.refresh에서
+// 거부되므로, 비밀번호를 바꾸는 곳은 모두 이 함수로 같은 UPDATE에 넣는다.
+export function passwordChangeData(
+  passwordHash: string,
+  changedAt: Date,
+): Pick<Prisma.UserUpdateInput, 'passwordHash' | 'passwordChangedAt'> {
+  return { passwordHash, passwordChangedAt: changedAt };
+}
 
 @Injectable()
 export class UserService {
-  constructor(private readonly prisma: PrismaService) {}
+  // 둘 다 없으면 가입·탈퇴·약관 동의가 동작할 수 없으므로 부팅 시점에 바로
+  // 실패시킨다.
+  private readonly withdrawnEmailSecret: string;
+  private readonly currentTermsVersion: string;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    configService: ConfigService,
+  ) {
+    this.withdrawnEmailSecret = configService.getOrThrow<string>(
+      'WITHDRAWN_EMAIL_HMAC_SECRET',
+    );
+    const termsVersion = configService.getOrThrow<string>('TERMS_VERSION');
+    if (!isValidTermsVersion(termsVersion)) {
+      throw new Error(
+        `TERMS_VERSION must be the current terms effective date in YYYY-MM-DD form (got "${termsVersion}")`,
+      );
+    }
+    this.currentTermsVersion = termsVersion;
+  }
+
+  // Spec 2.1: 현재 시행 중인 약관 버전(시행일).
+  getCurrentTermsVersion(): string {
+    return this.currentTermsVersion;
+  }
+
+  hashWithdrawnEmail(email: string): string {
+    return hmacEmail(email, this.withdrawnEmailSecret);
+  }
 
   findByEmail(email: string) {
     return this.prisma.user.findUnique({ where: { email } });
@@ -38,6 +79,14 @@ export class UserService {
 
   findById(id: string) {
     return this.prisma.user.findUnique({ where: { id } });
+  }
+
+  // 토큰 검증용 — 매 인증 요청마다 불리므로 필요한 컬럼만 읽는다.
+  findTokenCheckState(id: string) {
+    return this.prisma.user.findUnique({
+      where: { id },
+      select: { passwordChangedAt: true, status: true },
+    });
   }
 
   // 이용 제한 안내 화면용 — 아직 해제되지 않은 가장 최근 제한.
@@ -100,15 +149,30 @@ export class UserService {
     });
   }
 
-  async resetPassword(userId: string, passwordHash: string) {
-    return this.prisma.user.update({
-      where: { id: userId },
+  // 재설정 토큰을 소모하면서 비밀번호를 바꾼다. 토큰·만료 조건을 WHERE에 넣은
+  // UPDATE 한 문장이라 비밀번호 변경과 토큰 무효화가 함께 일어나고, 같은 토큰으로
+  // 동시에 들어온 요청은 행 잠금 뒤 조건을 다시 보므로 하나만 count 1을 얻는다.
+  // 재설정 토큰은 회원당 한 칸(passwordResetToken)이라 재요청하면 이전 토큰은
+  // 덮어써져 이미 무효고, 여기서 비우면 그 회원에게 남는 재설정 토큰은 없다.
+  async consumePasswordResetToken(
+    userId: string,
+    token: string,
+    passwordHash: string,
+    now: Date,
+  ): Promise<boolean> {
+    const { count } = await this.prisma.user.updateMany({
+      where: {
+        id: userId,
+        passwordResetToken: token,
+        passwordResetTokenExpiresAt: { gt: now },
+      },
       data: {
-        passwordHash,
+        ...passwordChangeData(passwordHash, now),
         passwordResetToken: null,
         passwordResetTokenExpiresAt: null,
       },
     });
+    return count === 1;
   }
 
   async updateStatus(userId: string, status: UserStatus, reason?: string) {
@@ -223,25 +287,34 @@ export class UserService {
   }
 
   // Spec 2.4: 마이페이지에서 현재 비밀번호를 확인한 뒤 바꾼다.
+  // 마이페이지 비밀번호 변경. 현재 비밀번호 확인 → 같은 비밀번호 거부 → 새 해시와
+  // passwordChangedAt을 한 UPDATE로 기록한다. 이 시각보다 먼저 발급된 토큰(다른
+  // 기기 포함)은 401이 되므로, 호출한 쪽(UserController)이 이 뒤에 새 토큰을
+  // 발급해 요청한 기기의 로그인을 유지한다.
   async changePassword(
     userId: string,
     currentPassword: string,
     newPassword: string,
-  ): Promise<void> {
+  ) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('사용자를 찾을 수 없습니다.');
     }
 
-    const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+    const matches =
+      user.passwordHash !== null &&
+      (await bcrypt.compare(currentPassword, user.passwordHash));
     if (!matches) {
       throw new CurrentPasswordMismatchException();
     }
+    if (await bcrypt.compare(newPassword, user.passwordHash!)) {
+      throw new SameAsCurrentPasswordException();
+    }
 
     const passwordHash = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
-    await this.prisma.user.update({
+    return this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash },
+      data: passwordChangeData(passwordHash, new Date()),
     });
   }
 
@@ -253,14 +326,39 @@ export class UserService {
     });
   }
 
-  async isEmailBlockedByRecentWithdrawal(email: string): Promise<boolean> {
-    const record = await this.prisma.withdrawnEmail.findUnique({
-      where: { emailHash: hashEmail(email) },
-    });
-    if (!record) {
-      return false;
+  // Spec 2.1: 약관이 바뀐 뒤 다시 동의받는다. 어떤 버전에 동의했는지는
+  // 클라이언트가 보낸 값이 아니라 서버의 현재 버전으로 기록한다.
+  async agreeToCurrentTerms(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('사용자를 찾을 수 없습니다.');
     }
-    return Date.now() - record.withdrawnAt.getTime() < THIRTY_DAYS_MS;
+    if (user.status === UserStatus.WITHDRAWN) {
+      throw new AccountWithdrawnException();
+    }
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        agreedTermsVersion: this.currentTermsVersion,
+        termsAgreedAt: new Date(),
+      },
+    });
+  }
+
+  // HMAC 도입 전 행(솔트 없는 SHA-256)도 함께 대조한다 — 그 행들은 탈퇴 30일
+  // 뒤 정리 배치가 지우므로, 그 이후엔 HMAC 행만 남는다.
+  async isEmailBlockedByRecentWithdrawal(email: string): Promise<boolean> {
+    const record = await this.prisma.withdrawnEmail.findFirst({
+      where: {
+        emailHash: {
+          in: [this.hashWithdrawnEmail(email), legacySha256Email(email)],
+        },
+        withdrawnAt: {
+          gt: new Date(Date.now() - WITHDRAWN_EMAIL_BLOCK_DAYS * DAY_MS),
+        },
+      },
+    });
+    return record !== null;
   }
 
   // Spec 2.5 / 3.4: 탈퇴 처리 — 팀장이면 후임자에게 자동 위임하거나 해산,
@@ -274,9 +372,9 @@ export class UserService {
       throw new AccountWithdrawnException();
     }
 
-    const emailHash = hashEmail(user.email);
+    const emailHash = this.hashWithdrawnEmail(user.email);
     const now = new Date();
-    const purgeAt = new Date(now.getTime() + THIRTY_DAYS_MS);
+    const purgeAt = new Date(now.getTime() + SURVEY_PURGE_AFTER_MS);
 
     await this.prisma.$transaction(async (tx) => {
       const ledTeams = await tx.team.findMany({
@@ -338,24 +436,44 @@ export class UserService {
         },
       });
 
+      // 응답·리더보드·설문은 회원 id로 남기고, 계정을 다시 쓸 수 있게 하거나
+      // 사람을 알아볼 수 있는 값만 지운다.
       await tx.user.update({
         where: { id: userId },
         data: {
           status: UserStatus.WITHDRAWN,
           email: null,
+          passwordHash: null,
           nickname: null,
           gender: null,
           grade: null,
           majorField: null,
           enrollmentStatus: null,
+          emailVerificationToken: null,
+          emailVerificationTokenExpiresAt: null,
+          passwordResetToken: null,
+          passwordResetTokenExpiresAt: null,
         },
       });
+
+      // 변경 전후 닉네임·프로필 원문이 남아 있으므로 함께 지운다.
+      await tx.userProfileHistory.deleteMany({ where: { userId } });
+
+      // TODO: refresh 토큰 서버 저장·폐기 작업이 들어오면 여기서 이 회원의
+      // RefreshToken을 전부 revoke한다. 지금은 stateless라 저장된 토큰이 없고,
+      // AuthService.refresh가 ACTIVE가 아닌 계정을 거부하는 것으로 막는다.
 
       await tx.userStatusHistory.create({
         data: { userId, status: UserStatus.WITHDRAWN, reason: '회원 탈퇴' },
       });
 
-      await tx.withdrawnEmail.create({ data: { emailHash } });
+      // 30일 뒤 같은 이메일로 재가입했다가 다시 탈퇴하면 이전 해시 행이 남아
+      // 있으므로 create는 unique 충돌이 난다 — 탈퇴 시각만 갱신한다.
+      await tx.withdrawnEmail.upsert({
+        where: { emailHash },
+        create: { emailHash, withdrawnAt: now },
+        update: { withdrawnAt: now },
+      });
     });
   }
 }

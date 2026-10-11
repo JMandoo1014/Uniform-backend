@@ -1,8 +1,16 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 
+// code를 주면 응답에 고정 code가 함께 실린다(프론트가 message 문구가 아니라 code로
+// 케이스를 구분할 수 있게). HttpExceptionFilter가 message·statusCode 외의 필드를
+// 그대로 얹으므로 응답은 { statusCode, message, code, path, timestamp }가 된다.
+// code가 없으면 지금처럼 문자열로 넘겨 응답 모양이 바뀌지 않는다.
 export class BusinessException extends HttpException {
-  constructor(message: string, status: HttpStatus = HttpStatus.BAD_REQUEST) {
-    super(message, status);
+  constructor(
+    message: string,
+    status: HttpStatus = HttpStatus.BAD_REQUEST,
+    readonly code?: string,
+  ) {
+    super(code === undefined ? message : { message, code }, status);
   }
 }
 
@@ -49,7 +57,11 @@ export class NoProfileChangesException extends BusinessException {
 // InvalidVerificationTokenException)과 같은 400으로 맞춘다.
 export class CurrentPasswordMismatchException extends BusinessException {
   constructor() {
-    super('현재 비밀번호가 올바르지 않습니다.', HttpStatus.BAD_REQUEST);
+    super(
+      '현재 비밀번호가 올바르지 않습니다.',
+      HttpStatus.BAD_REQUEST,
+      'CURRENT_PASSWORD_MISMATCH',
+    );
   }
 }
 
@@ -68,9 +80,27 @@ export class RecentlyWithdrawnEmailException extends BusinessException {
   }
 }
 
+// 비밀번호 재설정: 새 비밀번호가 지금 비밀번호와 같으면 거부한다(토큰은 소모하지
+// 않아 다른 비밀번호로 다시 시도할 수 있다).
+export class SameAsCurrentPasswordException extends BusinessException {
+  constructor() {
+    super(
+      '현재 비밀번호와 다른 비밀번호를 입력해주세요',
+      HttpStatus.BAD_REQUEST,
+      'SAME_AS_CURRENT_PASSWORD',
+    );
+  }
+}
+
 export class InvalidPasswordResetTokenException extends BusinessException {
   constructor() {
-    super('유효하지 않거나 만료된 재설정 토큰입니다.', HttpStatus.BAD_REQUEST);
+    // 없는·만료된·이미 쓴 토큰과 동시 요청에서 밀린 쪽 모두 같은 code — 토큰이
+    // 있었는지 응답으로 구분할 수 없어야 한다.
+    super(
+      '유효하지 않거나 만료된 재설정 토큰입니다.',
+      HttpStatus.BAD_REQUEST,
+      'INVALID_PASSWORD_RESET_TOKEN',
+    );
   }
 }
 

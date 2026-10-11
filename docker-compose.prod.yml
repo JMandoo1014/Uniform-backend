@@ -1,8 +1,17 @@
 # 배포용 스택(postgres + app + nginx). 로컬 개발용 docker-compose.yml(postgres
 # 단독, 5432 호스트 노출)과는 별도 파일이다 — 기존 `docker compose up -d` 개발
 # 습관을 건드리지 않기 위함. 실행: docker compose -f docker-compose.prod.yml up.
+# 컨테이너 로그(접속 IP·User-Agent가 담기는 nginx 접근 로그 포함)가 무한히
+# 쌓이지 않게 서비스당 최대 10MB × 5개(50MB)까지만 보관한다.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
+    logging: *default-logging
     image: postgres:16-alpine
     restart: unless-stopped
     env_file:
@@ -16,12 +25,17 @@ services:
       retries: 10
 
   app:
+    logging: *default-logging
     build:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # 컨테이너 안에서는 compose 네트워크의 nginx가 app:3000으로 붙어야 하므로 모든
+      # 인터페이스에서 받는다(앱 기본값은 127.0.0.1). 호스트에는 여전히 publish하지 않는다.
+      HOST: 0.0.0.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -29,6 +43,7 @@ services:
       - "3000"
 
   nginx:
+    logging: *default-logging
     image: nginx:alpine
     restart: unless-stopped
     ports:

@@ -1,6 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { JwtService, JwtSignOptions } from '@nestjs/jwt';
+import { JwtService } from '@nestjs/jwt';
 import { UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
@@ -13,6 +13,7 @@ import {
   EmailNotVerifiedException,
   InvalidCredentialsException,
   InvalidPasswordResetTokenException,
+  SameAsCurrentPasswordException,
   InvalidRefreshTokenException,
   InvalidVerificationTokenException,
   NicknameAlreadyExistsException,
@@ -29,18 +30,19 @@ import { PasswordResetConfirmDto } from './dto/password-reset-confirm.dto';
 import { ChangePendingEmailDto } from './dto/change-pending-email.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
+import { TokenService } from './token.service';
 import { AccessTokenResponseDto } from './dto/access-token-response.dto';
 import { JwtPayload } from './types/jwt-payload.type';
+import { isIssuedBeforePasswordChange } from './password-change.util';
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
-
   constructor(
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
+    private readonly tokenService: TokenService,
   ) {}
 
   async signup(dto: SignupDto) {
@@ -76,6 +78,7 @@ export class AuthService {
       enrollmentStatus: dto.enrollmentStatus,
       marketingOptIn: dto.marketingOptIn ?? false,
       agreedTermsVersion: dto.agreedTermsVersion,
+      termsAgreedAt: new Date(),
       status: UserStatus.PENDING_VERIFICATION,
       emailVerificationToken,
       emailVerificationTokenExpiresAt,
@@ -90,11 +93,6 @@ export class AuthService {
       dto.email,
       emailVerificationToken,
       emailVerificationTokenExpiresAt,
-    );
-    this.logDevOnlyToken(
-      'signup emailVerificationToken',
-      user.email,
-      emailVerificationToken,
     );
     return {
       id: user.id,
@@ -125,10 +123,9 @@ export class AuthService {
       throw new InvalidCredentialsException();
     }
 
-    const passwordMatches = await bcrypt.compare(
-      dto.password,
-      user.passwordHash,
-    );
+    const passwordMatches =
+      user.passwordHash !== null &&
+      (await bcrypt.compare(dto.password, user.passwordHash));
     if (!passwordMatches) {
       throw new InvalidCredentialsException();
     }
@@ -162,17 +159,15 @@ export class AuthService {
     if (!user || user.status !== UserStatus.ACTIVE) {
       throw new InvalidRefreshTokenException();
     }
+    // 비밀번호를 바꾸기 전에 발급된 refresh 토큰도 다른 무효 토큰과 같은 401.
+    if (isIssuedBeforePasswordChange(payload.iat, user.passwordChangedAt)) {
+      throw new InvalidRefreshTokenException();
+    }
 
-    const accessToken = await this.jwtService.signAsync(
-      { sub: user.id, email: payload.email },
-      {
-        secret: this.configService.getOrThrow<string>('JWT_SECRET'),
-        expiresIn: this.configService.get<string>(
-          'JWT_EXPIRES_IN',
-          '15m',
-        ) as JwtSignOptions['expiresIn'],
-      },
-    );
+    const accessToken = await this.tokenService.signAccessToken({
+      sub: user.id,
+      email: payload.email,
+    });
 
     return { accessToken };
   }
@@ -208,22 +203,39 @@ export class AuthService {
     const { token, expiresAt } = this.buildPasswordResetToken();
     await this.userService.setPasswordResetToken(user.id, token, expiresAt);
     await this.mailService.sendPasswordReset(dto.email, token, expiresAt);
-    this.logDevOnlyToken('password resetToken', user.email, token);
   }
 
+  // 없는·만료된·이미 쓴 토큰과 동시 요청에서 진 쪽은 모두 같은 예외(같은 400
+  // 응답)로 끝나서, 응답만으로는 토큰이 있었는지 구분할 수 없다.
   async confirmPasswordReset(dto: PasswordResetConfirmDto): Promise<void> {
+    const now = new Date();
     const user = await this.userService.findByPasswordResetToken(dto.token);
 
     if (
       !user ||
       !user.passwordResetTokenExpiresAt ||
-      user.passwordResetTokenExpiresAt.getTime() < Date.now()
+      user.passwordResetTokenExpiresAt.getTime() <= now.getTime()
     ) {
       throw new InvalidPasswordResetTokenException();
     }
 
+    if (
+      user.passwordHash !== null &&
+      (await bcrypt.compare(dto.newPassword, user.passwordHash))
+    ) {
+      throw new SameAsCurrentPasswordException();
+    }
+
     const passwordHash = await bcrypt.hash(dto.newPassword, BCRYPT_SALT_ROUNDS);
-    await this.userService.resetPassword(user.id, passwordHash);
+    const consumed = await this.userService.consumePasswordResetToken(
+      user.id,
+      dto.token,
+      passwordHash,
+      now,
+    );
+    if (!consumed) {
+      throw new InvalidPasswordResetTokenException();
+    }
   }
 
   // Spec 2.2: "인증 대기: ... 재발송과 가입 이메일 변경만 가능하다." 로그인
@@ -234,10 +246,9 @@ export class AuthService {
       throw new InvalidCredentialsException();
     }
 
-    const passwordMatches = await bcrypt.compare(
-      dto.password,
-      user.passwordHash,
-    );
+    const passwordMatches =
+      user.passwordHash !== null &&
+      (await bcrypt.compare(dto.password, user.passwordHash));
     if (!passwordMatches) {
       throw new InvalidCredentialsException();
     }
@@ -273,29 +284,11 @@ export class AuthService {
       token,
       expiresAt,
     );
-    this.logDevOnlyToken(
-      'pending-email-change emailVerificationToken',
-      updated.email,
-      token,
-    );
     return {
       id: updated.id,
       email: updated.email,
       status: updated.status,
     };
-  }
-
-  // 이메일 발송 연동 전까지 개발/테스트 환경에서만 토큰을 확인할 수 있게
-  // 서버 로그에 남긴다 — 어떤 환경에서도 응답 바디에는 넣지 않는다.
-  private logDevOnlyToken(
-    label: string,
-    email: string | null,
-    token: string,
-  ): void {
-    if (this.configService.get<string>('NODE_ENV') === 'production') {
-      return;
-    }
-    this.logger.debug(`[dev-only] ${label} for ${email}: ${token}`);
   }
 
   private buildPasswordResetToken(): { token: string; expiresAt: Date } {
@@ -320,24 +313,7 @@ export class AuthService {
     };
   }
 
-  private async issueTokens(payload: JwtPayload): Promise<TokenResponseDto> {
-    const [accessToken, refreshToken] = await Promise.all([
-      this.jwtService.signAsync(payload, {
-        secret: this.configService.getOrThrow<string>('JWT_SECRET'),
-        expiresIn: this.configService.get<string>(
-          'JWT_EXPIRES_IN',
-          '15m',
-        ) as JwtSignOptions['expiresIn'],
-      }),
-      this.jwtService.signAsync(payload, {
-        secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
-        expiresIn: this.configService.get<string>(
-          'JWT_REFRESH_EXPIRES_IN',
-          '7d',
-        ) as JwtSignOptions['expiresIn'],
-      }),
-    ]);
-
-    return { accessToken, refreshToken };
+  private issueTokens(payload: JwtPayload): Promise<TokenResponseDto> {
+    return this.tokenService.issueTokens(payload);
   }
 }

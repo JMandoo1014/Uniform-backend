@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { InquiryStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AdminAuditService } from './admin-audit.service';
 import { AdminInquiryDto } from './dto/admin-inquiry.dto';
@@ -37,9 +38,21 @@ export class AdminInquiriesService {
   ): Promise<AdminInquiryDto> {
     const inquiry = await this.findOrThrow(id);
 
+    // 처리 완료 시각은 보유 기간 계산 기준이라, 이미 ANSWERED인 문의를 다시
+    // ANSWERED로 바꿔도 처음 시각을 유지한다.
+    let answeredAt: Date | null | undefined;
+    if (dto.status === InquiryStatus.PENDING) {
+      answeredAt = null;
+    } else if (inquiry.status !== InquiryStatus.ANSWERED) {
+      answeredAt = new Date();
+    }
+
     const updated = await this.prisma.inquiry.update({
       where: { id },
-      data: { status: dto.status },
+      data: {
+        status: dto.status,
+        ...(answeredAt !== undefined ? { answeredAt } : {}),
+      },
     });
 
     await this.audit.record({

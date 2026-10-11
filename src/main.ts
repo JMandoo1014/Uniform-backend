@@ -46,6 +46,8 @@ async function bootstrap() {
   const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api-docs', app, swaggerDocument);
 
-  await app.listen(process.env.PORT ?? 3000);
+  // 기본은 127.0.0.1에만 바인딩한다 — 외부 요청은 호스트 nginx를 거쳐서만 들어온다.
+  // 컨테이너처럼 다른 호스트(compose nginx)가 붙어야 하면 HOST=0.0.0.0으로 연다.
+  await app.listen(process.env.PORT ?? 3000, process.env.HOST || '127.0.0.1');
 }
 void bootstrap();
