@@ -32,7 +32,7 @@ sudo ln -sfn /etc/nginx/sites-available/uniform-api /etc/nginx/sites-enabled/uni
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-개발 사이트는 개발 앱(127.0.0.1:3001)을 띄울 때 켠다.
+개발 사이트는 개발 앱(127.0.0.1:3001)을 띄울 때 켠다. 개발 서버 전체 구성 절차(DB·계정·PM2·DNS 포함)는 `docs/dev-server-runbook.md`.
 
 ```bash
 sudo ln -sfn /etc/nginx/sites-available/uniform-api-dev /etc/nginx/sites-enabled/uniform-api-dev
