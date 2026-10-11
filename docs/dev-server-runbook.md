@@ -1,6 +1,6 @@
 # 개발 서버 분리 절차서
 
-운영 서버(Oracle Cloud, `ubuntu@134.185.108.221`) 한 대에 운영과 개발 백엔드를 함께 띄운다. 이 문서는 서버에서 순서대로 따라 하는 절차다. 각 단계 끝에 확인 방법과 되돌리는 방법이 있다.
+운영 서버(Oracle Cloud, `ubuntu@<서버 IP>`) 한 대에 운영과 개발 백엔드를 함께 띄운다. 이 문서는 서버에서 순서대로 따라 하는 절차다. 각 단계 끝에 확인 방법과 되돌리는 방법이 있다.
 
 | | 운영 | 개발 |
 |---|---|---|
@@ -197,7 +197,7 @@ sudo nginx -t && sudo systemctl reload nginx
 ## 7. Cloudflare DNS `api-dev` 레코드
 
 Cloudflare 대시보드 → `uniform-app.com` → DNS → 레코드 추가:
-- 유형 `A`, 이름 `api-dev`, IPv4 `134.185.108.221`
+- 유형 `A`, 이름 `api-dev`, IPv4 `<서버 IP>`
 - **프록시 상태: 프록시됨(주황 구름)**. 꺼져 있으면 오리진 IP가 그대로 노출되고 Origin 인증서도 브라우저에서 거부된다.
 
 SSL/TLS 모드는 영역 전체 설정이라 `api`와 같이 적용된다.
@@ -205,7 +205,7 @@ SSL/TLS 모드는 영역 전체 설정이라 `api`와 같이 적용된다.
 확인(내 PC에서):
 
 ```bash
-dig +short api-dev.uniform-app.com     # Cloudflare IP가 나와야 한다(134.185.108.221이 나오면 프록시가 꺼진 것)
+dig +short api-dev.uniform-app.com     # Cloudflare IP가 나와야 한다(<서버 IP>가 나오면 프록시가 꺼진 것)
 ```
 
 되돌리기: 대시보드에서 `api-dev` 레코드 삭제.
