@@ -11,7 +11,7 @@
 | DB(같은 컨테이너 `uniform-postgres`) | `uniform_dev` (이름 유지) | `uniform_staging` |
 | DB 계정 | 기존 계정(`.env`의 `POSTGRES_USER`) | `uniform_staging` (자기 DB에만 권한) |
 | 도메인 | `api.uniform-app.com` | `api-dev.uniform-app.com` |
-| 프론트 | 운영 Pages 도메인 | `https://develop.uni-form-go.pages.dev` |
+| 프론트 | `https://www.uniform-app.com` | `https://develop.uni-form-go.pages.dev` |
 | 배포 | `./deploy.sh` | `./deploy-dev.sh` |
 
 **시작 전 조건**
@@ -242,6 +242,7 @@ grep '^CORS_ORIGIN=' .env        # 공개값이라 봐도 된다. 항목을 확�
 ```
 
 - `https://develop.uni-form-go.pages.dev` 항목이 있으면 그 항목만 지운다.
+- 운영 프론트 `https://www.uniform-app.com`은 남아 있어야 한다(이전 주소 `uni-form-go.pages.dev`와 `uniform-app.com`은 www로 301 리다이렉트되므로 브라우저가 보내는 Origin은 www다).
 - **`https://*.uni-form-go.pages.dev` 같은 와일드카드가 있으면, 그 항목이 `develop` 서브도메인도 허용한다.** 와일드카드를 남기면 개발 주소가 계속 허용되므로 와일드카드를 빼야 한다. Pages 프리뷰 주소는 개발 서버(`api-dev`)의 `CORS_ORIGIN`에 넣는 것을 권장한다.
 
 ```bash
@@ -256,7 +257,7 @@ pm2 restart uniform-backend --update-env
 # 개발 주소 → 운영 API: access-control-allow-origin 줄이 없어야 한다
 curl -s -D - -o /dev/null -X OPTIONS -H 'Origin: https://develop.uni-form-go.pages.dev' -H 'Access-Control-Request-Method: POST' https://api.uniform-app.com/auth/login | grep -i '^access-control-allow-origin' || echo "허용 안 됨(정상)"
 # 운영 프론트 주소 → 운영 API: 허용 줄이 나와야 한다
-curl -s -D - -o /dev/null -X OPTIONS -H 'Origin: <운영 프론트 주소>' -H 'Access-Control-Request-Method: POST' https://api.uniform-app.com/auth/login | grep -i '^access-control-allow-origin'
+curl -s -D - -o /dev/null -X OPTIONS -H 'Origin: https://www.uniform-app.com' -H 'Access-Control-Request-Method: POST' https://api.uniform-app.com/auth/login | grep -i '^access-control-allow-origin'
 ```
 
 확인이 끝나면 `.env` 백업 파일은 지운다(비밀값이 들어 있다): `rm ~/backups/env.before-cors-*`
