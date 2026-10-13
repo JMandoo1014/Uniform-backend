@@ -33,11 +33,11 @@ export function loginEmailTracker(req: Record<string, any>): string {
   return `email:${digest}`;
 }
 
-// 전역: IP당 분당 120회. 이메일 기준 제한은 @ThrottleLoginEmail()이 붙은
+// 전역: IP당 분당 600회. 이메일 기준 제한은 @ThrottleLoginEmail()이 붙은
 // 핸들러(로그인)에서만 센다. 계정 잠금은 두지 않는다 — 남이 일부러 틀려서 계정을
 // 잠그는 공격이 되므로, 창이 지나면 다시 시도할 수 있는 시간 제한만 건다.
 export const THROTTLERS: ThrottlerOptions[] = [
-  { name: 'default', ttl: MINUTE, limit: scaledLimit(120) },
+  { name: 'default', ttl: MINUTE, limit: scaledLimit(600) },
   {
     name: LOGIN_EMAIL_THROTTLER,
     ttl: 15 * MINUTE,
@@ -51,12 +51,12 @@ export const THROTTLERS: ThrottlerOptions[] = [
 // 엔드포인트별 IP 한도(전역 default를 대체). 로그인은 이메일 기준 제한도 켠다.
 export const ThrottleLogin = () =>
   applyDecorators(
-    Throttle({ default: { limit: scaledLimit(10), ttl: MINUTE } }),
+    Throttle({ default: { limit: scaledLimit(60), ttl: MINUTE } }),
     SetMetadata(LOGIN_EMAIL_THROTTLED, true),
   );
 
 export const ThrottleAccountMail = () =>
-  Throttle({ default: { limit: scaledLimit(5), ttl: 10 * MINUTE } });
+  Throttle({ default: { limit: scaledLimit(30), ttl: 10 * MINUTE } });
 
 export const ThrottleRefresh = () =>
-  Throttle({ default: { limit: scaledLimit(30), ttl: MINUTE } });
+  Throttle({ default: { limit: scaledLimit(300), ttl: MINUTE } });

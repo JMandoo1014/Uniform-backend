@@ -79,7 +79,7 @@ describe('Rate limiting (e2e)', () => {
     return blocked;
   }
 
-  it('login: 10 per minute per IP (different emails)', async () => {
+  it('login: 60 per minute per IP (different emails)', async () => {
     const ip = nextIp();
     await expectLimit(
       (i) =>
@@ -87,7 +87,7 @@ describe('Rate limiting (e2e)', () => {
           email: `ip-${i}@example.com`,
           password: 'x',
         }),
-      10,
+      60,
     );
     // 다른 IP는 영향 없음 — X-Forwarded-For(루프백 프록시가 넘긴 값)가 req.ip가 된다.
     const other = await post('/auth/login', nextIp(), {
@@ -124,20 +124,20 @@ describe('Rate limiting (e2e)', () => {
     '/auth/signup',
     '/auth/resend-verification',
     '/auth/password/reset-request',
-  ])('%s: 5 per 10 minutes per IP', async (path) => {
+  ])('%s: 30 per 10 minutes per IP', async (path) => {
     const ip = nextIp();
-    await expectLimit(() => post(path, ip), 5);
+    await expectLimit(() => post(path, ip), 30);
   });
 
-  it('refresh: 30 per minute per IP', async () => {
+  it('refresh: 300 per minute per IP', async () => {
     const ip = nextIp();
     await expectLimit(
       () => post('/auth/refresh', ip, { refreshToken: 'x' }),
-      30,
+      300,
     );
   });
 
-  it('everything else: 120 per minute per IP', async () => {
+  it('everything else: 600 per minute per IP', async () => {
     const ip = nextIp();
     // 인증 가드(401)보다 전역 요청 제한이 먼저 돈다.
     await expectLimit(
@@ -145,7 +145,7 @@ describe('Rate limiting (e2e)', () => {
         request(app.getHttpServer())
           .get('/users/me')
           .set('X-Forwarded-For', ip),
-      120,
+      600,
     );
   });
 });
