@@ -125,14 +125,6 @@ DATABASE_URL="$E2E_DB" npm run test:e2e
 
 `develop`과 `main`은 PR 없이 직접 push할 수 없습니다. 두 배포 스크립트는 브랜치·포트·DB가 맞는 환경인지 확인한 뒤에만 진행합니다. 서버에서 실행하는 세부 절차는 [docs/dev-server-runbook.md](docs/dev-server-runbook.md)를 따르세요.
 
-## 꼭 지킬 것
-
-- **`survey-purge`를 켜지 않는다.** 결과 화면의 확정 집계 스냅샷이 아직 없어서, 켜면 마감 30일이 지난 설문의 결과 그래프가 비게 됩니다. `RETENTION_DISABLED_JOBS`에 `survey-purge`를 그대로 둡니다.
-- **`TERMS_VERSION`은 프론트 `POLICY_EFFECTIVE_DATE`와 같은 날짜(`YYYY-MM-DD`)로 함께 바꾼다.** 바꾸면 그 날짜에 동의하지 않은 회원 전원에게 재동의를 받습니다.
-- **`WITHDRAWN_EMAIL_HMAC_SECRET`은 한 번 정하면 바꾸지 않는다.** 바꾸면 이미 탈퇴한 이메일과 대조가 안 돼 30일 재가입 차단이 풀립니다.
-- **운영과 개발은 비밀키를 공유하지 않는다.** `JWT_SECRET`, `JWT_REFRESH_SECRET`, `WITHDRAWN_EMAIL_HMAC_SECRET`, DB 계정·비밀번호는 환경마다 따로 만듭니다.
-- **`.env`는 커밋하지 않는다.** 템플릿만 커밋합니다: `.env.example`(로컬), `.env.staging.example`(개발 서버), `.env.production.example`(운영).
-
 ## 디렉터리 구조
 
 ```
