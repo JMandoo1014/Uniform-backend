@@ -2,6 +2,13 @@
 
 대학(원)생 대상 설문조사 플랫폼 **Uni-Form**의 API 서버입니다. 회원·팀·설문 작성(FormMate AI 도우미 포함)·응답·결과·리더보드·관리자 콘솔 API를 제공합니다.
 
+## 팀
+
+| 이름 | 담당 |
+|---|---|
+| 최지호 ([@JMandoo1014](https://github.com/JMandoo1014)) | Auth, User, Team, Survey(작성 ~ 게시), FormMate(AI 설문 도우미), 서버 인프라, 개인정보 보존 배치 |
+| 심기찬 ([@strain7626](https://github.com/strain7626)) | Response, Leaderboard, Result, MyPage, Dashboard, Support, Admin |
+
 ## 기술 스택
 
 | 구분 | 사용 |
