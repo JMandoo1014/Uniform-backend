@@ -12,6 +12,11 @@ import { ChangePendingEmailDto } from './dto/change-pending-email.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { AccessTokenResponseDto } from './dto/access-token-response.dto';
+import {
+  ThrottleAccountMail,
+  ThrottleLogin,
+  ThrottleRefresh,
+} from '../common/throttler/throttle.config';
 
 // signup/changePendingEmail이 공유하는 응답 모양 — 별도 DTO 클래스 없이 순수
 // 타입 애노테이션 용도로만 쓴다(런타임 로직 변경 없음). emailVerificationToken은
@@ -28,6 +33,7 @@ type PendingAccountResponse = {
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  @ThrottleAccountMail()
   @Post('signup')
   signup(@Body() dto: SignupDto): Promise<PendingAccountResponse> {
     return this.authService.signup(dto);
@@ -40,6 +46,7 @@ export class AuthController {
   }
 
   @HttpCode(HttpStatus.OK)
+  @ThrottleAccountMail()
   @Post('resend-verification')
   async resendVerification(
     @Body() dto: ResendVerificationDto,
@@ -51,18 +58,21 @@ export class AuthController {
   }
 
   @HttpCode(HttpStatus.OK)
+  @ThrottleLogin()
   @Post('login')
   login(@Body() dto: LoginDto): Promise<TokenResponseDto> {
     return this.authService.login(dto);
   }
 
   @HttpCode(HttpStatus.OK)
+  @ThrottleRefresh()
   @Post('refresh')
   refresh(@Body() dto: RefreshTokenDto): Promise<AccessTokenResponseDto> {
     return this.authService.refresh(dto);
   }
 
   @HttpCode(HttpStatus.OK)
+  @ThrottleAccountMail()
   @Post('password/reset-request')
   async requestPasswordReset(
     @Body() dto: PasswordResetRequestDto,
