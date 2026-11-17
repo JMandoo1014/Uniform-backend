@@ -55,7 +55,7 @@ flowchart LR
 
 | 브랜치 | 환경 | API | 짝이 되는 프론트 | 배포 |
 |---|---|---|---|---|
-| `main` | 운영 | `https://api.uniform-app.com` | `https://uni-form-go.pages.dev` | `deploy.sh` |
+| `main` | 운영 | `https://api.uniform-app.com` | `https://www.uniform-app.com` | `deploy.sh` |
 | `develop` | 개발 | `https://api-dev.uniform-app.com` | `https://develop.uni-form-go.pages.dev` | `deploy-dev.sh` |
 
 운영과 개발은 DB·DB 계정·비밀키가 모두 분리돼 있습니다.
