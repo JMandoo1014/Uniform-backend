@@ -325,3 +325,15 @@ export class FormMateGenerationFailedException extends BusinessException {
     );
   }
 }
+
+// 요청 횟수 제한(ThrottlerGuard) 초과 — 어떤 제한(IP·이메일)에 걸렸는지는 응답에
+// 드러내지 않는다. 대기 시간은 Retry-After 헤더로 내려간다.
+export class TooManyRequestsException extends BusinessException {
+  constructor() {
+    super(
+      '요청이 너무 많아요. 잠시 후 다시 시도해 주세요.',
+      HttpStatus.TOO_MANY_REQUESTS,
+      'TOO_MANY_REQUESTS',
+    );
+  }
+}

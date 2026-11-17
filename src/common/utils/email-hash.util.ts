@@ -1,6 +1,6 @@
 import { createHash, createHmac } from 'crypto';
 
-function normalizeEmail(email: string): string {
+export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 

@@ -1,14 +1,19 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { parseCorsOrigin } from './common/utils/cors-origin.util';
+import { applyTrustProxy } from './common/utils/trust-proxy.util';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // req.ip를 nginx가 넘긴 실제 접속자 IP로 — 요청 횟수 제한이 IP별로 센다.
+  applyTrustProxy(app);
 
   // 프론트(Vite dev server 등 다른 origin)에서 API를 직접 호출할 수 있도록 허용.
   // CORS_ORIGIN을 쉼표로 구분해 여러 origin을 지정할 수 있고(프로덕션 도메인 +

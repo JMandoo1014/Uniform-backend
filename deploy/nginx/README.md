@@ -32,6 +32,8 @@ sudo ln -sfn /etc/nginx/sites-available/uniform-api /etc/nginx/sites-enabled/uni
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
+`location`의 `proxy_set_header`(`X-Real-IP`·`X-Forwarded-For`·`X-Forwarded-Proto`)를 추가·변경했으면 위처럼 사이트 파일을 다시 복사한 뒤 `sudo nginx -t && sudo systemctl reload nginx`. 앱은 이 헤더를 127.0.0.1에서 온 요청에서만 믿고(`trust proxy` = `loopback`) 접속자 IP별 요청 횟수 제한에 쓴다.
+
 개발 사이트는 개발 앱(127.0.0.1:3001)을 띄울 때 켠다. 개발 서버 전체 구성 절차(DB·계정·PM2·DNS 포함)는 `docs/dev-server-runbook.md`.
 
 ```bash
